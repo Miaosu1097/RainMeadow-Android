@@ -6,13 +6,16 @@ on:
   workflow_dispatch:
     inputs:
       game_revision:
-        description: Game snapshot directory under libs/game
+        description: Game snapshot revision
         type: string
       build:
-        description: Managed verification or complete Android mod ZIP
+        description: Build mode when no release tag is supplied
         type: choice
         default: verify
         options: [verify, package]
+      release_tag:
+        description: Existing tag at the selected commit to create a draft Release
+        type: string
 
 permissions:
   contents: read
@@ -23,33 +26,22 @@ concurrency:
 
 jobs:
   build:
-    runs-on: [self-hosted, linux, x64, rain-meadow-build]
-    timeout-minutes: 40
-    env:
-      GAME_REVISION: ${{ inputs.game_revision || vars.RAIN_MEADOW_GAME_REVISION || '1.10' }}
-      BUILD_MODE: ${{ inputs.build || 'verify' }}
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          clean: false
-          persist-credentials: false
-      - name: Verify the source-only checkout
-        run: python3 -IB tools/rain-meadow/check_source.py
-      - name: Resolve the pinned game snapshot
-        id: game
-        run: |
-          commit=$(python3 -IB tools/rain-meadow/ci_inputs.py game-commit "$GAME_REVISION")
-          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
-      - name: Check out the private assembly snapshot
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          repository: ${{ vars.RAIN_MEADOW_ASSEMBLIES_REPOSITORY || 'MISTAKE568/Rain-Meadow-Android-Assemblies' }}
-          token: ${{ secrets.RAIN_MEADOW_ASSEMBLIES_TOKEN }}
-          ref: ${{ steps.game.outputs.commit }}
-          path: work/rain-meadow/assembly-source
-          sparse-checkout: ${{ env.GAME_REVISION }}
-          persist-credentials: false
-      - name: Compile for the selected game revision
-        env:
-          RAIN_MEADOW_GAME_ARCHIVE: work/rain-meadow/assembly-source/${{ env.GAME_REVISION }}/Managed.zip
-        run: sh tools/rain-meadow/ci.sh "$BUILD_MODE" "$GAME_REVISION"
+    if: ${{ !inputs.release_tag }}
+    uses: ./.github/workflows/android-run.yml
+    with:
+      game_revision: ${{ inputs.game_revision || vars.RAIN_MEADOW_GAME_REVISION || '1.10' }}
+      build: ${{ inputs.build || 'verify' }}
+    secrets:
+      assemblies_token: ${{ secrets.RAIN_MEADOW_ASSEMBLIES_TOKEN }}
+
+  draft-release:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag != '' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/android-run.yml
+    with:
+      game_revision: ${{ inputs.game_revision || vars.RAIN_MEADOW_GAME_REVISION || '1.10' }}
+      build: package
+      release_tag: ${{ inputs.release_tag }}
+    secrets:
+      assemblies_token: ${{ secrets.RAIN_MEADOW_ASSEMBLIES_TOKEN }}

@@ -1,0 +1,63 @@
+name: Build Android package
+
+on:
+  workflow_call:
+    inputs:
+      game_revision:
+        type: string
+        required: true
+      build:
+        type: string
+        required: true
+      release_tag:
+        type: string
+    secrets:
+      assemblies_token:
+        required: false
+
+jobs:
+  run:
+    runs-on: ${{ fromJSON(vars.RAIN_MEADOW_RUNNER || '"ubuntu-24.04"') }}
+    timeout-minutes: 40
+    env:
+      GAME_REVISION: ${{ inputs.game_revision }}
+      BUILD_MODE: ${{ inputs.build }}
+      RAIN_MEADOW_GAME_ARCHIVE: work/rain-meadow/assembly-source/${{ inputs.game_revision }}/Managed.zip
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          clean: false
+          persist-credentials: false
+      - name: Verify the source-only checkout
+        run: python3 -IB tools/rain-meadow/check_source.py
+      - name: Verify the release tag
+        if: ${{ inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: sh tools/rain-meadow/draft-release.sh check "$RELEASE_TAG"
+      - name: Resolve the pinned game snapshot
+        id: game
+        run: |
+          commit=$(python3 -IB tools/rain-meadow/ci_inputs.py game-commit "$GAME_REVISION")
+          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
+      - name: Check out the assembly snapshot
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ vars.RAIN_MEADOW_ASSEMBLIES_REPOSITORY || 'MISTAKE568/Rain-Meadow-Android-Assemblies' }}
+          token: ${{ secrets.assemblies_token || github.token }}
+          ref: ${{ steps.game.outputs.commit }}
+          path: work/rain-meadow/assembly-source
+          sparse-checkout: ${{ env.GAME_REVISION }}
+          persist-credentials: false
+      - name: Install packages on the GitHub-hosted runner
+        if: ${{ runner.environment == 'github-hosted' }}
+        run: sh tools/rain-meadow/setup-hosted-runner.sh "$BUILD_MODE"
+      - name: Compile for the selected game revision
+        run: sh tools/rain-meadow/ci.sh "$BUILD_MODE" "$GAME_REVISION"
+      - name: Attach the ZIP and checksum to a draft Release
+        if: ${{ inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: sh tools/rain-meadow/draft-release.sh upload "$RELEASE_TAG" "$GAME_REVISION"

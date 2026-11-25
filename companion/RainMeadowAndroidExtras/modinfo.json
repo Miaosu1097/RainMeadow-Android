@@ -1,0 +1,11 @@
+{
+  "id": "rainmeadow.android.extras",
+  "name": "Rain Meadow Android Extras",
+  "version": "1.0.0",
+  "authors": "Miaosu1097",
+  "description": "Adds Android platform marker broadcasting and an in-game update notice to the Rain Meadow Android port.<LINE>为 Rain Meadow 安卓移植版补充平台标识广播与游戏内更新公告。",
+  "requirements": [],
+  "requirements_names": [],
+  "checksum_override_version": false,
+  "tags": [ "Tools", "Online" ]
+}

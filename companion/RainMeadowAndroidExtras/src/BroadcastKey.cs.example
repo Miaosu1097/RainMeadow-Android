@@ -1,0 +1,8 @@
+namespace RainMeadowAndroidExtras
+{
+    internal static class BroadcastKey
+    {
+        internal const string PacketKey = "FILL_ME_IN";
+        internal const string Payload = "FILL_ME_IN";
+    }
+}

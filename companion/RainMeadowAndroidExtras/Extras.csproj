@@ -1,0 +1,79 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>RainMeadowAndroidExtras</AssemblyName>
+    <RootNamespace>RainMeadowAndroidExtras</RootNamespace>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <!--
+    GameManaged   : 游戏的 Managed 目录（含 Assembly-CSharp.dll / BepInEx.dll / UnityEngine*.dll）
+    RainMeadowDll : 编译好的 Rain Meadow.dll（手机版编译产物）
+    NewtonsoftDll : Newtonsoft.Json.dll
+
+    三者都是二进制，不纳入版本控制；本地/CI 构建时用 -p: 传入。
+  -->
+  <PropertyGroup>
+    <GameManaged Condition="'$(GameManaged)' == ''">libs/game/Managed</GameManaged>
+    <RainMeadowDll Condition="'$(RainMeadowDll)' == ''">$(GameManaged)/Rain Meadow.dll</RainMeadowDll>
+    <NewtonsoftDll Condition="'$(NewtonsoftDll)' == ''">$(GameManaged)/Newtonsoft.Json.dll</NewtonsoftDll>
+    <OutputPath>bin/$(Configuration)/</OutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="src/**/*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="BepInEx">
+      <HintPath>$(GameManaged)/BepInEx.dll</HintPath>
+      <Private>false</Private>
+      <!--
+        Assembly-CSharp.dll 内嵌了 BepInEx 的 shim（BaseUnityPlugin / BepInPlugin 等同名类型），
+        直接引用会与真正的 BepInEx.dll 冲突（CS0433）。用别名隔离。
+        源码里相应使用：extern alias bepinex;  using bepinex::BepInEx;
+      -->
+      <Aliases>bepinex</Aliases>
+    </Reference>
+    <Reference Include="PUBLIC-Assembly-CSharp">
+      <HintPath>$(GameManaged)/Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="HOOKS-Assembly-CSharp">
+      <HintPath>$(GameManaged)/HOOKS-Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(GameManaged)/UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(GameManaged)/UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.UnityWebRequestModule">
+      <HintPath>$(GameManaged)/UnityEngine.UnityWebRequestModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(NewtonsoftDll)</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Rain Meadow">
+      <HintPath>$(RainMeadowDll)</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- 打包成可直接投放的模组目录：<OutDir>mod/RainMeadowAndroidExtras/{modinfo.json,plugins/} -->
+  <Target Name="PackMod" AfterTargets="Build">
+    <PropertyGroup>
+      <ModOutDir>$(OutputPath)mod/RainMeadowAndroidExtras/</ModOutDir>
+    </PropertyGroup>
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ModOutDir)plugins/" />
+    <Copy SourceFiles="modinfo.json" DestinationFolder="$(ModOutDir)" />
+  </Target>
+</Project>
