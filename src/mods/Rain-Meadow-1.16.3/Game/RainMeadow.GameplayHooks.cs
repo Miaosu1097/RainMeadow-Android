@@ -1,0 +1,1248 @@
+using Mono.Cecil.Cil;
+using MonoMod.Cil;
+using MonoMod.RuntimeDetour;
+using MonoMod.Utils;
+using RWCustom;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using UnityEngine;
+using RWCustom;
+
+namespace RainMeadow
+{
+    public partial class RainMeadow
+    {
+        public void GameplayHooks()
+        {
+            On.ShelterDoor.Close += ShelterDoorOnClose;
+            On.ShelterDoor.DoorClosed += ShelterDoor_DoorClosed;
+            On.Creature.Update += CreatureOnUpdate;
+            On.Creature.Violence += CreatureOnViolence;
+            On.Lizard.Violence += Lizard_Violence; // todo there might be more like this one that do not call base()
+
+            // If the weapon super calls Weapon.HitSomething we don't have to hook
+            // Weapon_HitSomething hooks
+            HookWeaponHitSomething<Spear>();
+            HookWeaponHitSomething<ScavengerBomb>();
+            HookWeaponHitSomething<FirecrackerPlant>();
+            // HookWeapon<FlareBomb>();
+            // HookWeapon<PuffBall>();
+            HookWeaponHitSomething<Rock>();
+
+            // moreslugcats Weapon_HitSomething hooks
+            HookWeaponHitSomething<MoreSlugcats.LillyPuck>();
+            HookWeaponHitSomething<MoreSlugcats.Bullet>();
+            HookWeaponHitSomething<MoreSlugcats.SingularityBomb>();
+
+            // Watcher Weapon_HitSomething
+            HookWeaponHitSomething<Boomerang>();
+
+            // for super calls
+            HookWeaponHitSomething<Weapon>();
+            IL.Weapon.HitAnotherThrownWeapon += Weapon_HitAnotherThrownWeapon;
+
+
+            On.PhysicalObject.HitByExplosion += PhysicalObject_HitByExplosion;
+            IL.ScavengerBomb.Explode += PhysicalObject_Explode;
+            IL.ExplosiveSpear.Explode += PhysicalObject_Explode;
+
+            IL.MoreSlugcats.SingularityBomb.Explode += PhysicalObject_Explode;
+            IL.FlareBomb.StartBurn += PhysicalObject_Explode;
+            IL.FirecrackerPlant.Ignite += PhysicalObject_Trigger;
+            IL.FirecrackerPlant.Explode += PhysicalObject_Explode;
+            IL.PuffBall.Explode += PhysicalObject_Explode;
+            IL.MoreSlugcats.FireEgg.Explode += PhysicalObject_Explode;
+            IL.MoreSlugcats.EnergyCell.Explode += PhysicalObject_Explode;
+            IL.JellyFish.Tossed += PhysicalObject_Trigger;
+            IL.Snail.Click += PhysicalObject_Trigger;
+            IL.VultureGrub.InitiateSignal += PhysicalObject_Trigger;
+
+            On.Spear.Spear_makeNeedle += Spear_makeNeedle;
+
+            On.AbstractPhysicalObject.AbstractObjectStick.ctor += AbstractObjectStick_ctor;
+            On.Creature.SwitchGrasps += Creature_SwitchGrasps;
+
+            On.RoomRealizer.Update += RoomRealizer_Update;
+            On.Creature.Die += Creature_Die; // do not die!
+            IL.Player.TerrainImpact += Player_TerrainImpact;
+            IL.VirtualMicrophone.Update += VirtualMicrophone_Update;
+            On.DeafLoopHolder.Update += DeafLoopHolder_Update;
+            On.Weapon.HitThisObject += Weapon_HitThisObject;
+            On.Weapon.Thrown += Weapon_Thrown;
+            On.SharedPhysics.TraceProjectileAgainstBodyChunks += SharedPhysics_TraceProjectileAgainstBodyChunks;
+            On.SocialEventRecognizer.CreaturePutItemOnGround += SocialEventRecognizer_CreaturePutItemOnGround;
+            On.DataPearl.InitiateSprites += DataPearl_InitiateSprites;
+            IL.JokeRifle.Use += JokeRifle_Use;
+            On.Vulture.AccessSkyGate += Vulture_AccessSkyGate;
+
+            On.PlayerGraphics.Update += PlayerGraphics_Update_MakePlayerThinkWhenTyping;
+            On.Watcher.LightningMaker.Strike += LightningMaker_Strike;
+        }
+
+        private void LightningMaker_Strike(On.Watcher.LightningMaker.orig_Strike orig, Watcher.LightningMaker self, Vector2 pos, float branchingChance, float size, float effectRadius, float killRadius, int delayFrames)
+        {
+            if (OnlineManager.lobby == null)
+            {
+                orig(self, pos, branchingChance, size, effectRadius, killRadius, delayFrames);
+            }
+            else
+            {
+                var roomSession = self.room.abstractRoom.GetResource();
+                if (roomSession != null && roomSession.isOwner)
+                {
+                    orig(self, pos, branchingChance, size, effectRadius, killRadius, delayFrames);
+                    foreach(var player in roomSession.participants)
+                    {
+                        if (player.isMe) continue;
+                        player.InvokeRPC(RPCs.LightingMakerStrike, roomSession, pos, branchingChance, size, effectRadius, killRadius, delayFrames);
+                    }
+                }
+            }
+        }
+
+        private void PlayerGraphics_Update_MakePlayerThinkWhenTyping(On.PlayerGraphics.orig_Update orig, PlayerGraphics self)
+        {
+            orig(self);
+            if (OnlineManager.lobby is not null
+                && self.player.abstractCreature.GetOnlineCreature()?.owner is OnlinePlayer onlinePlayer
+                && OnlineManager.lobby.clientSettings.TryGetValue(onlinePlayer, out var cs))
+            {
+                if (cs.isInteracting && self.player.touchedNoInputCounter > 0)
+                {
+                    if (!cs.isThinking) cs.isThinking = true;
+                    self.LookAtPoint(self.player.mainBodyChunk.pos + Vector2.up * 25f, 100);
+                    self.player.Blink(10);
+                    if ((self.player.abstractCreature.world.game.GetStorySession is not StoryGameSession storyGame 
+                        || storyGame.saveState.deathPersistentSaveData.theMark)
+                        && self.player.abstractCreature.world.game.ActiveRippleLayer == self.player.abstractCreature.rippleLayer)
+                    {
+                        self.markAlpha = Custom.LerpAndTick(
+                            self.lastMarkAlpha, 
+                            Mathf.Clamp01(1f - UnityEngine.Random.value * Mathf.InverseLerp(80f, 30f, self.player.touchedNoInputCounter)), 
+                            0.1f, 
+                            0.033333335f
+                        );
+                        // RainMeadow.Debug($"Mark at alpha {self.markAlpha}<{self.player.touchedNoInputCounter}>");
+                    }
+                }
+                else if (cs.isThinking)
+                {
+                    self.LookAtNothing();
+                    cs.isThinking = false;
+                }
+            }
+        }
+
+        // Prevent ammo from duping
+        private void JokeRifle_Use(ILContext il)
+        {
+            var c = new ILCursor(il);
+            ILLabel skip = null;
+
+            // Bees and regular bullets are already set to not sync, this will cover everything else.
+
+            // Jump past first if statements, doesn't really matter where
+
+            c.GotoNext(MoveType.After,
+                i => i.MatchLdarg(0),
+                i => i.MatchLdfld<JokeRifle>(nameof(JokeRifle.scareObj)),
+                i => i.MatchBrtrue(out _));
+
+
+            string[] ammoTypes =
+            {
+                // order matters
+                nameof(JokeRifle.AbstractRifle.AmmoType.Noodle),
+                nameof(JokeRifle.AbstractRifle.AmmoType.Singularity),
+                nameof(JokeRifle.AbstractRifle.AmmoType.FireEgg),
+                nameof(JokeRifle.AbstractRifle.AmmoType.Grenade),
+                nameof(JokeRifle.AbstractRifle.AmmoType.Light)
+            };
+
+            foreach (var ammoType in ammoTypes)
+            {
+                c.GotoNext(MoveType.After,
+                    i => i.MatchLdarg(0),
+                    i => i.MatchCall<JokeRifle>("get_abstractRifle"),
+                    i => i.MatchLdfld<JokeRifle.AbstractRifle>(nameof(JokeRifle.AbstractRifle.ammoStyle)),
+                    i => i.MatchLdsfld<JokeRifle.AbstractRifle.AmmoType>(ammoType),
+                    i => i.MatchCall("ExtEnum`1<JokeRifle/AbstractRifle/AmmoType>", "op_Equality"),
+                    i => i.MatchBrfalse(out skip));
+
+                c.Emit(OpCodes.Ldarg_0);
+                c.EmitDelegate((JokeRifle self) =>
+                {
+                    return !self.IsLocal();
+                });
+                c.Emit(OpCodes.Brtrue, skip);
+            }
+        }
+        public void Vulture_AccessSkyGate(On.Vulture.orig_AccessSkyGate orig, Vulture self, WorldCoordinate start, WorldCoordinate dest)
+        {
+
+            if (OnlineManager.lobby != null)
+            {
+                for (int i = 0; i < self.grasps.Length; i++)
+                {
+                    if (self.grasps[i]?.grabbed is Player player)
+                    {
+                        player.Die();
+                        player.State.alive = false;
+                    }
+                }
+            }
+            orig(self, start, dest);
+
+        }
+
+        private void DataPearl_InitiateSprites(On.DataPearl.orig_InitiateSprites orig, DataPearl self, RoomCamera.SpriteLeaser sLeaser, RoomCamera rCam)
+        {
+            if (OnlineManager.lobby != null && SpecialEvents.EventActiveInLobby<SpecialEvents.AprilFools>())
+            {
+                SpecialEvents.DataPearl_InitiateSprites(orig, self, sLeaser, rCam);
+            }
+            else
+            {
+                orig(self, sLeaser, rCam);
+            }
+        }
+
+        private RealizedWeaponState? GetAppropriateWeaponState(OnlinePhysicalObject obj) => obj.apo.realizedObject switch
+        {
+            Spear => new RealizedSpearState(obj),
+            Weapon => new RealizedWeaponState(obj),
+            _ => null
+        };
+
+        private void Weapon_HitAnotherThrownWeapon(ILContext il)
+        {
+            try
+            {
+                ILCursor cursor = new(il);
+                ILLabel label = cursor.DefineLabel();
+                if (cursor.TryGotoNext(MoveType.After, x => x.MatchBneUn(out label)))
+                {
+                    cursor.MoveAfterLabels();
+                    cursor.EmitDelegate(() => OnlineManager.lobby is not null && RPCEvent.currentRPCEvent is not null);
+                    cursor.Emit(OpCodes.Brtrue, label); 
+                    // If we are in an RPC, move it directly to parrying, even if the weapons are going in the same directions
+
+                    cursor.GotoLabel(label, MoveType.Before);
+                    cursor.MoveAfterLabels();
+                    cursor.Emit(OpCodes.Ldarg_0);
+                    cursor.Emit(OpCodes.Ldarg_1);
+                    cursor.EmitDelegate((Weapon w1, Weapon w2) =>
+                        {
+                            RainMeadow.DebugMe();
+                            if (OnlineManager.lobby != null && RPCEvent.currentRPCEvent is null) 
+                                return BroacastParry(w1, w2);
+                            return true;
+                        }
+                    );
+                    // If the weapons are about to deflect each other, call BroacastParry.
+                    
+                    cursor.Emit(OpCodes.Brtrue, cursor.Next);
+                    cursor.Emit(OpCodes.Ret);
+                    // If BroacastParry returns false (you are a bystander of the parry), the parry needs to be cancelled.
+                }
+                else
+                {
+                    RainMeadow.Error("Could not find IL hook :<");
+                }
+                    
+            }
+            catch (Exception ex)
+            {
+                RainMeadow.Error("Error occured while hooking : " + ex);
+            }
+        }
+        private bool BroacastParry(Weapon A, Weapon B)
+        {
+            RainMeadow.DebugMe();
+            OnlinePhysicalObject? wep1 = A.abstractPhysicalObject.GetOnlineObject();
+            OnlinePhysicalObject? wep2 = B.abstractPhysicalObject.GetOnlineObject();
+            if (wep1 == null || wep2 == null) return true;
+            if (!(wep1.isMine || wep2.isMine)) return false; // you are a bystander of a parry, wait for the RPC to actually see it
+            RainMeadow.Debug($"Parry {wep1}, {wep1.owner}, {wep2}, {wep2.owner}");
+            
+            RealizedWeaponState? realizedstatewep1 = GetAppropriateWeaponState(wep1);
+            if (realizedstatewep1 is null)
+            {
+                RainMeadow.Error($"Failed to create the appropriate weapon state for obj {wep1}");
+                return true;
+            } 
+
+            
+            RealizedWeaponState? realizedstatewep2 = GetAppropriateWeaponState(wep2);
+            if (realizedstatewep2 is null)
+            {
+                RainMeadow.Error($"Failed to create the appropriate weapon state for obj {wep2}");
+                return true;
+            } 
+            
+
+            if (!wep1.isMine)
+            {
+                wep1.Lock("parry", wep1.owner.InvokeRPC(RPCs.Weapon_HitAnotherThrownWeapon, wep1, wep2, realizedstatewep1, realizedstatewep2, A.firstChunk.lastPos, B.firstChunk.lastPos, UnityEngine.Random.state));
+            }
+
+            if (!wep2.isMine)
+            {
+                wep2.Lock("parry", wep2.owner.InvokeRPC(RPCs.Weapon_HitAnotherThrownWeapon, wep1, wep2, realizedstatewep1, realizedstatewep2, A.firstChunk.lastPos, B.firstChunk.lastPos, UnityEngine.Random.state));
+            }
+            
+
+            foreach (OnlinePlayer p in wep1.roomSession?.participants ?? [])
+            {
+                if (p != wep1.owner && p != wep2.owner)
+                {
+                    p?.InvokeRPC(RPCs.Weapon_HitAnotherThrownWeapon, wep1, wep2, realizedstatewep1, realizedstatewep2, A.firstChunk.lastPos, B.firstChunk.lastPos, UnityEngine.Random.state);
+                }
+            }
+            return true;
+        }
+
+        private void SocialEventRecognizer_CreaturePutItemOnGround(On.SocialEventRecognizer.orig_CreaturePutItemOnGround orig,
+            SocialEventRecognizer self, PhysicalObject item, Creature creature)
+        {
+
+            orig(self, item, creature);
+            if (OnlineManager.lobby is null) return;
+            if (!creature.IsLocal()) return;
+
+            if (RoomSession.map.TryGetValue(creature.room.abstractRoom, out var roomSession))
+            {
+                if (creature.abstractCreature.GetOnlineCreature(out OnlineCreature? oc) &&
+                    item.abstractPhysicalObject.GetOnlineObject(out OnlinePhysicalObject? opo))
+                {
+                    oc?.BroadcastRPCInRoom(roomSession.CreaturePutItemOnGround,
+                        opo.id, oc.id);
+                }
+
+            }
+        }
+
+        // meant to fix spears going in between body chunks in arena mode, but could also be useful for other potential pvp-focused gamemodes
+        public static SharedPhysics.CollisionResult SharedPhysics_TraceProjectileAgainstBodyChunks(On.SharedPhysics.orig_TraceProjectileAgainstBodyChunks orig, SharedPhysics.IProjectileTracer projTracer, Room room, Vector2 lastPos, ref Vector2 pos, float rad, int collisionLayer, PhysicalObject exemptObject, bool hitAppendages)
+        {
+            if (OnlineManager.lobby == null || !(RainMeadow.isArenaMode(out var arena) ? arena.weaponCollisionFix : RainMeadow.rainMeadowOptions.WeaponCollisionFix.Value))
+            {
+                return orig(projTracer, room, lastPos, ref pos, rad, collisionLayer, exemptObject, hitAppendages);
+            }
+            var result = orig(projTracer, room, lastPos, ref pos, rad, collisionLayer, exemptObject, hitAppendages);
+            if (result.chunk == null && result.onAppendagePos == null && exemptObject is Player)
+            {
+                // only need to check the collision layer that slugcats occupy
+                foreach (var obj in room.physicalObjects[1])
+                {
+                    // minimize invasiveness by only changing logic if both parties are players
+                    if (obj != exemptObject && obj is Player && (exemptObject.abstractPhysicalObject.rippleLayer == obj.abstractPhysicalObject.rippleLayer || exemptObject.abstractPhysicalObject.rippleBothSides || obj.abstractPhysicalObject.rippleBothSides) && obj.canBeHitByWeapons && (projTracer == null || projTracer.HitThisObject(obj)) && obj.bodyChunks.Length > 1 && (obj.grabbedBy == null || !obj.grabbedBy.Any(g => g.grabber == exemptObject)))
+                    {
+                        var chunk1 = obj.bodyChunks[0];
+                        var chunk2 = obj.bodyChunks[1];
+                        var p = Custom.LineIntersection(lastPos, pos, chunk1.pos, chunk2.pos);
+                        if (Custom.DistLess(p, lastPos, Vector2.Distance(lastPos, pos)) && Custom.DistLess(p, pos, Vector2.Distance(lastPos, pos)) && Custom.DistLess(p, chunk1.pos, Vector2.Distance(chunk1.pos, chunk2.pos)) && Custom.DistLess(p, chunk2.pos, Vector2.Distance(chunk1.pos, chunk2.pos)))
+                        {
+                            if (Custom.Dist(chunk1.pos, pos) < Custom.Dist(chunk2.pos, pos))
+                            {
+                                result = new SharedPhysics.CollisionResult(obj, chunk1, null, true, Vector2.Lerp(lastPos, pos, 0.5f));
+                            }
+                            else
+                            {
+                                result = new SharedPhysics.CollisionResult(obj, chunk2, null, true, Vector2.Lerp(lastPos, pos, 0.5f));
+                            }
+                        }
+                    }
+                }
+            }
+            return result;
+        }
+
+        private static void Weapon_Thrown(On.Weapon.orig_Thrown orig, Weapon self, Creature thrownBy, Vector2 thrownPos, Vector2? firstFrameTraceFromPos, IntVector2 throwDir, float frc, bool eu)
+        {
+            if (OnlineManager.lobby != null && (RainMeadow.isArenaMode(out var arena) ? arena.weaponCollisionFix : RainMeadow.rainMeadowOptions.WeaponCollisionFix.Value) && thrownBy is Player && firstFrameTraceFromPos != null)
+            {
+                // move back last position, so that the spear traces starting from the throw chunk
+                self.firstChunk.lastPos = firstFrameTraceFromPos.Value;
+            }
+            orig(self, thrownBy, thrownPos, firstFrameTraceFromPos, throwDir, frc, eu);
+        }
+
+        bool WeaponIsDangerous(Weapon weapon)
+        {
+            if (ModManager.DLCShared && weapon is MoreSlugcats.LillyPuck) return true;
+            if (weapon is Spear) return true;
+
+            return false;
+        }
+
+        private bool Weapon_HitThisObject(On.Weapon.orig_HitThisObject orig, Weapon self, PhysicalObject obj)
+        {
+            if (OnlineManager.lobby != null)
+            {
+                if (ModManager.MSC && obj is Player pl && pl.slugOnBack?.slugcat != null && pl.slugOnBack.slugcat == self.thrownBy)
+                {
+                    return false;
+                }
+
+                if (obj is Creature c && WeaponIsDangerous(self))
+                {
+                    return !c.FriendlyFireSafetyCandidate(self.thrownBy);
+                }
+
+            }
+            return orig(self, obj);
+        }
+
+        private void Centipede_Shock(ILContext il)
+        {
+            try
+            {
+                var c = new ILCursor(il);
+                var skip = il.DefineLabel();
+                c.GotoNext(moveType: MoveType.After,
+                    i => i.MatchLdarg(1),
+                    i => i.MatchIsinst<Creature>(),
+                    i => i.MatchCallvirt<Creature>(nameof(Creature.Die))
+                    );
+                c.MoveAfterLabels();
+                c.Emit(OpCodes.Ldarg_0);
+                c.Emit(OpCodes.Ldarg_1);
+                c.EmitDelegate((Centipede self, PhysicalObject shockObj) =>
+                {
+                    if (OnlineManager.lobby != null && OnlineManager.lobby.gameMode is not MeadowGameMode && shockObj is Player player)
+                        DeathMessage.CvPRPC(self, player);
+                });
+            }
+            catch (Exception e)
+            {
+                Logger.LogError(e);
+            }
+        }
+
+        // Keep this for now despite having DeathContextualizerf
+        private void Player_TerrainImpact(ILContext il)
+        {
+            try
+            {
+                var c = new ILCursor(il);
+                var skip = il.DefineLabel();
+                c.GotoNext(moveType: MoveType.After,
+                    i => i.MatchLdstr("Fall damage death")
+                    );
+                c.Emit(OpCodes.Ldarg_0);
+                c.EmitDelegate((Player self) =>
+                {
+                    if (OnlineManager.lobby != null && OnlineManager.lobby.gameMode is not MeadowGameMode)
+                    {
+                        //DeathMessage.EnvironmentalDeathMessage(self, DeathMessage.DeathType.FallDamage);
+                        DeathMessage.EnvironmentalRPC(self, DeathMessage.DeathType.FallDamage);
+                    }
+
+                });
+            }
+            catch (Exception e)
+            {
+                Logger.LogError(e);
+            }
+        }
+
+        private void VirtualMicrophone_Update(ILContext il)
+        {
+            try
+            {
+                var c = new ILCursor(il);
+                var skipVanilla = il.DefineLabel();
+
+                //Old: deafContribution = 0f; if (followAbstractCreature?.realizedCreature != null) deafContribution = (IsArenaSession && followAbstractCreature.realizedCreature is Player) ? game.Players.Max(p => p.realizedCreature.Deaf) : followAbstractCreature.realizedCreature.Deaf;
+                //New: deafContribution = 0f; if (OnlineManager.lobby != null) deafContribution = (me != null && me.room != null && !me.slatedForDeletetion) ? me.Deaf : 0f;
+                c.GotoNext(MoveType.After,
+                    i => i.MatchStfld<VirtualMicrophone>(nameof(VirtualMicrophone.deafContribution))
+                    );
+                c.Emit(OpCodes.Ldarg_0);
+                c.EmitDelegate((VirtualMicrophone self) =>
+                {
+                    if (OnlineManager.lobby == null) return false;
+                    var me = self.room?.game?.Players?
+                        .FirstOrDefault(x => x != null && x.IsLocal())?.realizedCreature;
+                    self.deafContribution = (me != null && me.room != null && !me.slatedForDeletetion)
+                        ? me.Deaf
+                        : 0f;
+                    return true;
+                });
+                c.Emit(OpCodes.Brtrue, skipVanilla);
+
+                c.GotoNext(MoveType.Before,
+                    i => i.MatchLdarg(0),
+                    i => i.MatchLdarg(0),
+                    i => i.MatchLdfld<VirtualMicrophone>(nameof(VirtualMicrophone.deaf))
+                    );
+                c.MarkLabel(skipVanilla);
+            }
+            catch (Exception e)
+            {
+                Logger.LogError(e);
+            }
+        }
+
+        private void DeafLoopHolder_Update(On.DeafLoopHolder.orig_Update orig, DeafLoopHolder self, bool eu)
+        {
+            if (OnlineManager.lobby != null && self.player != null && !self.player.IsLocal())
+            {
+                self.slatedForDeletetion = true;
+                return;
+            }
+            orig(self, eu);
+        }
+
+        private void Creature_Die(On.Creature.orig_Die orig, Creature self)
+        {
+            if (OnlineManager.lobby != null)
+            {
+                if (OnlineManager.lobby.gameMode is MeadowGameMode)
+                {
+                    return;
+                }
+
+                if (!self.dead) // Prevent death messages from firing 987343 times.
+                {
+                    DeathMessage.CreatureDeath(self);
+                }
+            }
+            orig(self);
+        }
+        private void Spear_makeNeedle(On.Spear.orig_Spear_makeNeedle orig, Spear self, int type, bool active)
+        {
+            // apo.realize defaults to inactive even if remote is active
+            if (!self.IsLocal()) active = self.spearmasterNeedle_hasConnection;
+            orig(self, type, active);
+        }
+
+        private void PhysicalObject_Trigger(ILContext il)
+        {
+            try
+            {
+                var c = new ILCursor(il);
+                var skip = il.DefineLabel();
+                c.Emit(OpCodes.Ldarg_0);
+                c.EmitDelegate((PhysicalObject self) =>
+                {
+                    if (OnlineManager.lobby != null)
+                    {
+                        if (!self.abstractPhysicalObject.GetOnlineObject(out var opo))
+                        {
+                            Error($"Entity {self} doesn't exist in online space!");
+                            return true;
+                        }
+                        if (opo.roomSession.isOwner && (opo.isMine || RPCEvent.currentRPCEvent is not null || self is not Player))
+                        {
+                            opo.BroadcastRPCInRoom(opo.Trigger);
+                        }
+                        else if (RPCEvent.currentRPCEvent is null)
+                        {
+                            if (!opo.isMine) return false;  // wait to be RPC'd
+                            opo.roomSession.owner.InvokeOnceRPC(opo.Trigger);
+                        }
+                    }
+                    return true;
+                });
+                c.Emit(OpCodes.Brtrue, skip);
+                c.Emit(OpCodes.Ret);
+                c.MarkLabel(skip);
+            }
+            catch (Exception e)
+            {
+                Logger.LogError(e);
+            }
+        }
+
+        private void PhysicalObject_Explode(ILContext il)
+        {
+            try
+            {
+                var c = new ILCursor(il);
+                var skip = il.DefineLabel();
+                c.Emit(OpCodes.Ldarg_0);
+                c.EmitDelegate((PhysicalObject self) =>
+                {
+                    if (OnlineManager.lobby != null)
+                    {
+                        if (!self.abstractPhysicalObject.GetOnlineObject(out var opo))
+                        {
+                            Error($"Entity {self} doesn't exist in online space!");
+                            return true;
+                        }
+                        if (opo.roomSession.isOwner && (opo.isMine || RPCEvent.currentRPCEvent is not null || self is not Player))
+                        {
+                            opo.BroadcastRPCInRoom(opo.Explode, self.bodyChunks[0].pos);
+                        }
+                        else if (RPCEvent.currentRPCEvent is null)
+                        {
+                            if (!opo.isMine) return false;  // wait to be RPC'd
+                            opo.roomSession.owner.InvokeOnceRPC(opo.Explode, self.bodyChunks[0].pos);
+                        }
+                    }
+                    return true;
+                });
+                c.Emit(OpCodes.Brtrue, skip);
+                c.Emit(OpCodes.Ret);
+                c.MarkLabel(skip);
+            }
+            catch (Exception e)
+            {
+                Logger.LogError(e);
+            }
+        }
+
+        private static void Creature_SwitchGrasps(On.Creature.orig_SwitchGrasps orig, Creature self, int fromGrasp, int toGrasp)
+        {
+            orig(self, fromGrasp, toGrasp);
+            if (OnlineManager.lobby != null)
+            {
+                // unmap so they're re-created and detected as different instances by shallow delta
+                var a = self.grasps[fromGrasp];
+                var b = self.grasps[toGrasp];
+                if (a != null) GraspRef.map.Remove(a);
+                if (b != null) GraspRef.map.Remove(b);
+                for (int j = 0; j < self.abstractCreature.stuckObjects.Count; j++)
+                {
+                    if (self.abstractCreature.stuckObjects[j] is AbstractPhysicalObject.CreatureGripStick cgs && cgs.A == self.abstractCreature)
+                    {
+                        if (a != null && a.graspUsed == cgs.grasp)
+                        {
+                            AbstractObjStickRepr.map.Remove(cgs);
+                        }
+                        else if (b != null && b.graspUsed == cgs.grasp)
+                        {
+                            AbstractObjStickRepr.map.Remove(cgs);
+                        }
+                    }
+                }
+            }
+        }
+
+        private static void AbstractObjectStick_ctor(On.AbstractPhysicalObject.AbstractObjectStick.orig_ctor orig, AbstractPhysicalObject.AbstractObjectStick self, AbstractPhysicalObject A, AbstractPhysicalObject B)
+        {
+            if (OnlineManager.lobby != null)
+            {
+                // issue: abstractsticks are often duplicated
+                for (int i = A.stuckObjects.Count - 1; i >= 0; i--)
+                {
+                    var other = A.stuckObjects[i];
+                    if (other.A == A && other.B == B && other.GetType() == self.GetType())
+                    {
+                        if (AbstractObjStickRepr.map.TryGetValue(other, out var otherRep))
+                        {
+                            AbstractObjStickRepr.map.Add(self, otherRep);
+                        }
+                        other.Deactivate();
+                    }
+                }
+                // issue: connecting things that belong to different players is troublesome
+                if (OnlinePhysicalObject.map.TryGetValue(A, out var opoA) && OnlinePhysicalObject.map.TryGetValue(B, out var opoB)) // both online
+                {
+                    if (opoA.isMine)
+                    {
+                        // try transfer "grabbed" side
+                        if (!opoB.isMine)
+                        {
+                            RainMeadow.Debug("my object connecting to group that isn't mine");
+                            var bentities = B.GetAllConnectedObjects().Select(o => OnlinePhysicalObject.map.TryGetValue(o, out var opo) ? opo : null).Where(o => o != null).ToList();
+                            bool btransferable = bentities.All(e => e.isTransferable);
+                            if (btransferable)
+                            {
+                                RainMeadow.Debug("requesting all connected objects");
+                                foreach (var item in bentities)
+                                {
+                                    if (!item.isPending) item.Request();
+                                    else
+                                    {
+                                        RainMeadow.Debug($"can't request {item} because pending");
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                RainMeadow.Debug("can't request object because group not transferable");
+                            }
+                        } // else: both groups mine nothing to do
+                    }
+                    else if (opoB.isMine) // A not mine, B mine
+                    {
+                        RainMeadow.Debug("grabbed group is mine");
+                        // grabber isn't mine, THEY need to request me tho
+                        var bentities = B.GetAllConnectedObjects().Select(o => OnlinePhysicalObject.map.TryGetValue(o, out var opo) ? opo : null).Where(o => o != null).ToList();
+                        bool btransferable = bentities.All(e => e.isTransferable);
+                        if (btransferable)
+                        {
+                            RainMeadow.Debug("grabbed group is transferable"); // other will request
+                        }
+                        else
+                        {
+                            RainMeadow.Debug("grabbed group is NOT transferable");
+                            var aentities = A.GetAllConnectedObjects().Select(o => OnlinePhysicalObject.map.TryGetValue(o, out var opo) ? opo : null).Where(o => o != null).ToList();
+                            bool atransferable = aentities.All(e => e.isTransferable);
+                            if (atransferable)
+                            {
+                                RainMeadow.Debug("requesting all connected objects");
+                                foreach (var item in aentities)
+                                {
+                                    if (!item.isPending) item.Request();
+                                    else
+                                    {
+                                        RainMeadow.Debug($"can't request {item} because pending");
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                RainMeadow.Debug("can't request grabber group because group not transferable");
+                            }
+                        }
+                    }
+                }
+            }
+            orig(self, A, B);
+        }
+
+        private void PhysicalObject_HitByExplosion(On.PhysicalObject.orig_HitByExplosion orig, PhysicalObject self, float hitFac, Explosion explosion, int hitChunk)
+        {
+            if (OnlineManager.lobby == null)
+            {
+                orig(self, hitFac, explosion, hitChunk);
+                return;
+            }
+
+            if (self.room == null && (self.room = explosion?.room) == null)
+                return;
+
+            if (RoomSession.map.TryGetValue(self.room.abstractRoom, out var room))
+            {
+                if (!room.isOwner)
+                {
+                    OnlinePhysicalObject.map.TryGetValue(self.abstractPhysicalObject, out var objectHit);
+                    if (explosion != null && explosion.sourceObject != null)
+                    {
+                        OnlinePhysicalObject.map.TryGetValue(explosion.sourceObject.abstractPhysicalObject, out var explosionSource);
+
+                        if (objectHit != null && (objectHit.isMine || (explosionSource != null && explosionSource.isMine)))
+                        {
+                            room.owner.InvokeOnceRPC(objectHit.HitByExplosion, hitFac);
+                            return;
+                        }
+                    }
+                }
+            }
+
+            orig(self, hitFac, explosion, hitChunk);
+        }
+
+
+        void HookWeaponHitSomething<T>() where T : Weapon => new Hook(typeof(T).GetMethod("HitSomething"), Weapon_HitSomething<T>);
+        delegate bool Weapon_orig_HitSomething<T>(T self, SharedPhysics.CollisionResult result, bool eu);
+        private bool Weapon_HitSomething<WeaponT>(Weapon_orig_HitSomething<WeaponT> orig, WeaponT self, SharedPhysics.CollisionResult result, bool eu)
+            where WeaponT : Weapon
+        {
+
+            if (OnlineManager.lobby == null)
+            {
+                return orig(self, result, eu);
+            }
+
+            if (result.obj == null)
+            {
+                return orig(self, result, eu);
+            }
+
+            OnlinePhysicalObject.map.TryGetValue(self.abstractPhysicalObject, out var WeaponOnline);
+            OnlinePhysicalObject.map.TryGetValue(result.obj.abstractPhysicalObject, out var onlineHit);
+            if (onlineHit == null)
+            {
+                RainMeadow.Debug($"Object hit by weapon not found in online space. object: {onlineHit}, weapon: {WeaponOnline}");
+                return orig(self, result, eu);
+            }
+
+            if (WeaponOnline == null)
+            {
+                RainMeadow.Debug($"weapon that hit object not found in online space. object: {onlineHit}, weapon: {WeaponOnline}");
+                return orig(self, result, eu);
+            }
+
+            if (RPCEvent.currentRPCEvent is not null)
+            {
+                bool wasthrown = self.mode == Weapon.Mode.Thrown;
+                if (self.thrownBy != null && result.obj != null && result.obj is Creature critter)
+                {
+                    self.thrownClosestToCreature = null;
+                    self.closestCritDist = float.MaxValue;
+                    critter.SetKillTag(self.thrownBy.abstractCreature);
+                }
+
+                bool ret = orig(self, result, eu);
+
+                if (self is ExplosiveSpear explosiveSpear)
+                {
+                    if (wasthrown && explosiveSpear.mode != Weapon.Mode.Thrown && explosiveSpear.igniteCounter < 1)
+                    {
+                        explosiveSpear.Ignite();
+                    }
+                }
+
+                return ret;
+            }
+            else if (WeaponOnline.isMine || WeaponOnline.isPending)
+            {
+                RealizedWeaponState? realizedstate = GetAppropriateWeaponState(WeaponOnline);
+                if (realizedstate != null)
+                {
+                    BodyChunkRef? chunk = result.chunk is null ? null : new BodyChunkRef(onlineHit, result.chunk.index);
+                    AppendageRef? appendageRef = result.onAppendagePos is null ? null : new AppendageRef(result.onAppendagePos);
+
+                    if (!onlineHit.owner.isMe)
+                    {
+                        onlineHit.owner.InvokeRPC(WeaponOnline.WeaponHitSomething, realizedstate, new OnlinePhysicalObject.OnlineCollisionResult(
+                            onlineHit.id, chunk, appendageRef, result.hitSomething, result.collisionPoint
+                        ));
+                    }
+
+                    return orig(self, result, eu);
+                } else RainMeadow.Error($"Failed to create the appropriate weapon state for obj {WeaponOnline}");
+            }
+            return true;
+        }
+
+        private void ShelterDoorOnClose(On.ShelterDoor.orig_Close orig, ShelterDoor self)
+        {
+            if (OnlineManager.lobby == null)
+            {
+                orig(self);
+                return;
+            }
+            RainMeadow.isStoryMode(out var storyGameMode);
+
+            if (storyGameMode is not null && StoryRPCs.RPCcloseShelter)
+            {
+                storyGameMode.storyClientData.readyForWin = true;
+            }
+            else if (storyGameMode is not null && !self.Broken)
+            {
+                bool ready_for_win = true;
+                bool starving = false;
+                for (int i = 0; i < self.room.game.Players.Count; i++)
+                {
+                    AbstractCreature? player = self.room.game.Players[i];
+                    if (player is null) continue;
+                    if (player.state.dead)
+                    {
+                        if (self.room.world.game.rainWorld.options.jollyDifficulty == Options.JollyDifficulty.EASY)
+                        {
+                            if (self.room.world.game.rainWorld.options.jollyDifficulty == Options.JollyDifficulty.EASY)
+                            {
+                                continue;
+                            }
+                            else if (self.room.world.game.rainWorld.options.jollyDifficulty == Options.JollyDifficulty.HARD)
+                            {
+                                // RainMeadow.Debug("not ready for win since somebody is dead on hard mode");
+                                ready_for_win = false;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (Custom.ManhattanDistance(player.pos.Tile, self.room.shortcuts[0].StartTile) <= 6)
+                    {
+                        // RainMeadow.Debug("not ready for win since somebody is to close to the entrance");
+                        ready_for_win = false;
+                        break;
+                    }
+
+                    if (!ShelterDoor.IsTileInsideShelterRange(self.room.abstractRoom, player.pos.Tile))
+                    {
+                        // RainMeadow.Debug("not ready for win since somebody is not in the shelters range");
+                        ready_for_win = false;
+                        break;
+                    }
+
+                    if (player.Room != self.room.abstractRoom)
+                    {
+                        // RainMeadow.Debug($"not ready for win since somebody is not in the room. is_dead: {player.state.dead}");
+                        ready_for_win = false;
+                        continue;
+                    }
+
+                    if (player.realizedCreature is Player p && !player.state.dead)
+                    {
+                        if (p.forceSleepCounter <= 0)
+                        {
+                            if (p.timeSinceInCorridorMode < 10)
+                            {
+                                // RainMeadow.Debug($"not ready for win since somebody is in a corridor. is_dead: {player.state.dead}");
+                                ready_for_win = false;
+                                break;
+                            }
+
+                            if (p.touchedNoInputCounter < 80)
+                            {
+                                // RainMeadow.Debug($"not ready for win since somebody is touching iputs. is_dead: {player.state.dead}");
+                                ready_for_win = false;
+                                break;
+                            }
+
+                            if (!p.readyForWin)
+                            {
+                                // RainMeadow.Debug($"not ready for win since somebody isn't ready for win. is_dead: {player.state.dead}");
+                                ready_for_win = false;
+                                break;
+                            }
+                        }
+
+
+                        if (p.forceSleepCounter > 0)
+                        {
+                            starving = true;
+                        }
+                    }
+                }
+
+                if (ready_for_win)
+                {
+                    storyGameMode.storyClientData.readyForWin = true;
+                }
+
+                if (!(ready_for_win && starving && OnlineManager.lobby.isOwner))
+                {
+                    if (!storyGameMode.readyForWin)
+                    {
+                        if (self.room.updateList[self.room.updateIndex] is Player smeepy)
+                        {
+                            // wake us up
+                            smeepy.sleepCounter = 0;
+                            smeepy.forceSleepCounter = Mathf.Min(smeepy.forceSleepCounter, 260);
+                        }
+
+                        return;
+                    }
+                }
+
+            }
+            else
+            {
+                // invalidunits: Since we're only supporting jolly in Story mode, I aint gonna mess with this.
+                var scug = self.room.game.Players.First(); //needs to be changed if we want to support Jolly
+                var realizedScug = (Player)scug.realizedCreature;
+                if (realizedScug == null || !self.room.PlayersInRoom.Contains(realizedScug)) return;
+                if (!realizedScug.readyForWin) return;
+            }
+
+            bool wasClosing = self.IsClosing;
+            orig(self);
+
+            if (self.IsClosing)
+            {
+                if (storyGameMode != null && storyGameMode.storyClientData.readyForWin)
+                {
+
+                    if (SpecialEvents.EventActiveInLobby<SpecialEvents.AprilFools>() && !storyGameMode.hasSheltered)
+                    {
+                        var entities = self.room.abstractRoom.entities;
+                        int coinCount = 0;
+                        for (int i = entities.Count - 1; i >= 0; i--)
+                        {
+                            if (entities[i] is DataPearl.AbstractDataPearl pearl)
+                            {
+                                if (pearl.dataPearlType == DataPearl.AbstractDataPearl.DataPearlType.Misc || pearl.dataPearlType == DataPearl.AbstractDataPearl.DataPearlType.Misc2)
+                                {
+                                    if (pearl.dataPearlType == DataPearl.AbstractDataPearl.DataPearlType.Misc || pearl.dataPearlType == DataPearl.AbstractDataPearl.DataPearlType.Misc2)
+                                    {
+                                        if (pearl.realizedObject is PhysicalObject obj && obj.room == self.room)
+                                        {
+                                            for (int j = 0; j < 20; j++)
+                                            {
+                                                self.room.AddObject(new MeadowTokenCoin.MeadowCoin(obj.bodyChunks.OfType<BodyChunk>().First().pos + Custom.RNV() * 2f, Custom.RNV() * 16f * UnityEngine.Random.value, Color.Lerp(Color.yellow, new Color(1f, 1f, 1f), 0.5f + 0.5f * UnityEngine.Random.value), false));
+                                            }
+                                            pearl.GetOnlineObject()?.RemoveEntityFromRoom(); // ugly: since pearls are destroyed after door closing it's very noticeable when are they destroyed
+                                            coinCount++;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        SpecialEvents.GainedMeadowCoin(coinCount);
+                        if (coinCount > 0)
+                        {
+                            SpecialEvents.PlayMeadowCoinSound(self.room);
+                        }
+
+                    }
+
+                    storyGameMode.myLastDenPos = self.room.abstractRoom.name;
+                    storyGameMode.myLastWarp = null; //do not warp anymore!
+                    storyGameMode.hasSheltered = true;
+
+                    if (OnlineManager.lobby.isOwner && !wasClosing)
+                    {
+                        foreach (OnlinePlayer p in OnlineManager.players)
+                        {
+                            p.InvokeOnceRPC(StoryRPCs.CloseAllShelters);
+                        }
+                    }
+                }
+            }
+        }
+
+        private void ShelterDoor_DoorClosed(On.ShelterDoor.orig_DoorClosed orig, ShelterDoor self)
+        {
+            if (isStoryMode(out var storyGameMode) && !storyGameMode.hasSheltered) return;
+            orig(self);
+        }
+
+        private void CreatureOnUpdate(On.Creature.orig_Update orig, Creature self, bool eu)
+        {
+            if (OnlineManager.lobby == null)
+            {
+                orig(self, eu);
+                return;
+            }
+            if (!OnlinePhysicalObject.map.TryGetValue(self.abstractPhysicalObject, out var onlineCreature))
+            {
+                Trace($"Creature {self} {self.abstractPhysicalObject.ID} doesn't exist in online space!");
+                orig(self, eu);
+                return;
+            }
+
+            if (OnlineManager.lobby.gameMode is MeadowGameMode)
+            {
+                if (self.room != null)
+                {
+                    // fall out of world handling
+                    float num = -self.bodyChunks[0].restrictInRoomRange + 1f;
+                    if (self is Player && self.bodyChunks[0].restrictInRoomRange == self.bodyChunks[0].defaultRestrictInRoomRange)
+                    {
+                        if ((self as Player).bodyMode == Player.BodyModeIndex.WallClimb)
+                        {
+                            num = Mathf.Max(num, -250f);
+                        }
+                        else
+                        {
+                            num = Mathf.Max(num, -500f);
+                        }
+                    }
+                    if (self.bodyChunks[0].pos.y < num && (!self.room.water || self.room.waterInverted || self.room.defaultWaterLevel < -10) && (!self.Template.canFly || self.Stunned || self.dead) && (self is Player || !self.room.game.IsArenaSession || self.room.game.GetArenaGameSession.chMeta == null || !self.room.game.GetArenaGameSession.chMeta.oobProtect))
+                    {
+                        RainMeadow.Debug("fall out of world prevention: " + self);
+                        var room = self.room;
+                        self.RemoveFromRoom();
+                        room.CleanOutObjectNotInThisRoom(self); // we need it this frame
+                        var node = self.coord.abstractNode;
+                        if (node > room.abstractRoom.exits) node = UnityEngine.Random.Range(0, room.abstractRoom.exits);
+                        self.SpitOutOfShortCut(room.ShortcutLeadingToNode(node).startCoord.Tile, room, true);
+                    }
+                }
+            }
+
+            if (OnlineManager.lobby.gameMode is ArenaOnlineGameMode || OnlineManager.lobby.gameMode is StoryGameMode)
+            {
+                if (self.room != null)
+                {
+                    // fall out of world handling
+                    float num = -self.bodyChunks[0].restrictInRoomRange + 1f;
+                    if (self is Player && self.bodyChunks[0].restrictInRoomRange == self.bodyChunks[0].defaultRestrictInRoomRange)
+                    {
+                        if ((self as Player).bodyMode == Player.BodyModeIndex.WallClimb)
+                        {
+                            num = Mathf.Max(num, -250f);
+                        }
+                        else
+                        {
+                            num = Mathf.Max(num, -500f);
+                        }
+                    }
+                    if (self?.bodyChunks != null && self.bodyChunks.Length > 0 && self.bodyChunks[0].pos.y < num &&
+                        self.room != null && (!self.room.water || self.room.waterInverted || self.room.defaultWaterLevel < -10) &&
+                        (self.Template == null || !self.Template.canFly || self.Stunned || self.dead) &&
+                        (self is Player || self.room.game?.GetArenaGameSession?.chMeta?.oobProtect != true))
+                    {
+
+                        //DeathMessage.EnvironmentalDeathMessage(self as Player, DeathMessage.DeathType.Abyss);
+                        DeathMessage.EnvironmentalRPC(self as Player, DeathMessage.DeathType.Abyss);
+                        RainMeadow.Debug("prevent abstract creature destroy: " + self); // need this so that we don't release the world session on death
+                        self.Die();
+                        self.State.alive = false;
+                    }
+                }
+            }
+
+            orig(self, eu); //Need to run our fall out of world handling BEFORE orig, otherwise entering WallClimb below -250y will run orig's kill code before we have a chance to detect and abort it.
+
+            if (OnlineManager.lobby.gameMode is MeadowGameMode)
+            {
+                if (EmoteDisplayer.map.TryGetValue(self, out var displayer))
+                {
+                    displayer.OnUpdate(); // so this only updates while the creature is in-room, what about creatures in pipes though
+                }
+
+                if (self is AirBreatherCreature breather) breather.lungs = 1f;
+            }
+
+            // this is here as a safegard because we don't transfer full detail grasp data
+            if (onlineCreature.isMine && self.grasps != null)
+            {
+                foreach (var grasp in self.grasps)
+                {
+                    if (grasp == null || grasp.grabbed == null) continue;
+                    if (!OnlinePhysicalObject.map.TryGetValue(grasp.grabbed.abstractPhysicalObject, out var onlineGrabbed))
+                    {
+                        Trace($"Grabbed object {grasp.grabbed.abstractPhysicalObject} {grasp.grabbed.abstractPhysicalObject.ID} doesn't exist in online space!");
+                        continue;
+                    }
+                    if (onlineGrabbed != null && !onlineGrabbed.isMine && onlineGrabbed.isTransferable && !onlineGrabbed.isPending) // been leased to someone else
+                    {
+                        var grabbersOtherThanMe = grasp.grabbed.grabbedBy.Select(x => x.grabber).Where(x => x != self);
+                        if (grabbersOtherThanMe.All(x => x.abstractPhysicalObject.GetOnlineObject(out var opo) && opo != null && opo.isMine))
+                            onlineGrabbed.Request();
+                    }
+                }
+            }
+        }
+
+        private void CreatureOnViolence(On.Creature.orig_Violence orig, Creature self, BodyChunk source, Vector2? directionAndMomentum, BodyChunk hitChunk, PhysicalObject.Appendage.Pos hitAppendage, Creature.DamageType type, float damage, float stunBonus)
+        {
+            if (OnlineManager.lobby == null)
+            {
+                orig(self, source, directionAndMomentum, hitChunk, hitAppendage, type, damage, stunBonus);
+                return;
+            }
+            if (OnlineManager.lobby.gameMode is MeadowGameMode)
+            {
+                return;
+            }
+            if (!OnlinePhysicalObject.map.TryGetValue(self.abstractPhysicalObject, out var onlineApo) || onlineApo is not OnlineCreature onlineCreature)
+            {
+                Error($"Target {self} doesn't exist in online space!");
+                orig(self, source, directionAndMomentum, hitChunk, hitAppendage, type, damage, stunBonus);
+                return;
+            }
+
+            var room = self.room;
+            if (room != null && room.updateIndex <= room.updateList.Count)
+            {
+                PhysicalObject trueVillain = null;
+                var suspect = room.updateList[room.updateIndex];
+                if (suspect is Explosion explosion) trueVillain = explosion.sourceObject;
+                else if (suspect is PhysicalObject villainObject) trueVillain = villainObject;
+                if (trueVillain != null)
+                {
+                    if (!OnlinePhysicalObject.map.TryGetValue(trueVillain.abstractPhysicalObject, out var onlineTrueVillain))
+                    {
+                        if (trueVillain.abstractPhysicalObject.type == AbstractPhysicalObject.AbstractObjectType.ScavengerBomb
+                            || trueVillain.abstractPhysicalObject.type == DLCSharedEnums.AbstractObjectType.SingularityBomb)
+                        {
+                            // bombs exit quickly, and that's ok.
+                            OnlinePhysicalObject onlineVillain = null;
+                            onlineCreature.RPCCreatureViolence(onlineVillain, hitChunk?.index, hitAppendage, directionAndMomentum, type, damage, stunBonus);
+                            return;
+                        }
+                        Error($"True villain {trueVillain} - {trueVillain.abstractPhysicalObject.ID} doesn't exist in online space!");
+                        orig(self, source, directionAndMomentum, hitChunk, hitAppendage, type, damage, stunBonus);
+                        return;
+                    }
+                    if (!(trueVillain is Weapon)) // handled Weapon_HitSomething 
+                    {
+                        if ((onlineTrueVillain.owner.isMe || onlineTrueVillain.isPending) && !onlineApo.owner.isMe) // I'm violencing a remote entity
+                        {
+                            OnlinePhysicalObject onlineVillain = null;
+                            if (source != null && !OnlinePhysicalObject.map.TryGetValue(source.owner.abstractPhysicalObject, out onlineVillain))
+                            {
+                                Error($"Source {source.owner} - {source.owner.abstractPhysicalObject.ID} doesn't exist in online space!");
+                                orig(self, source, directionAndMomentum, hitChunk, hitAppendage, type, damage, stunBonus);
+                                return;
+                            }
+                            // Notify entity owner of violence
+                            onlineCreature.RPCCreatureViolence(onlineVillain, hitChunk?.index, hitAppendage, directionAndMomentum, type, damage, stunBonus);
+                            return; // Remote is gonna handle this
+                        }
+                        if (!onlineTrueVillain.owner.isMe) return; // Remote entity will send an event
+                    }
+
+                }
+            }
+            orig(self, source, directionAndMomentum, hitChunk, hitAppendage, type, damage, stunBonus);
+        }
+
+        // copypaste of above for now
+        private void Lizard_Violence(On.Lizard.orig_Violence orig, Lizard self, BodyChunk source, Vector2? directionAndMomentum, BodyChunk hitChunk, PhysicalObject.Appendage.Pos hitAppendage, Creature.DamageType type, float damage, float stunBonus)
+        {
+            if (OnlineManager.lobby == null)
+            {
+                orig(self, source, directionAndMomentum, hitChunk, hitAppendage, type, damage, stunBonus);
+                return;
+            }
+            if (OnlineManager.lobby.gameMode is MeadowGameMode)
+            {
+                return;
+            }
+            if (!OnlinePhysicalObject.map.TryGetValue(self.abstractPhysicalObject, out var onlineApo) || onlineApo is not OnlineCreature onlineCreature)
+            {
+                Error($"Target {self} doesn't exist in online space!");
+                orig(self, source, directionAndMomentum, hitChunk, hitAppendage, type, damage, stunBonus);
+                return;
+            }
+
+            var room = self.room;
+            if (room != null && room.updateIndex <= room.updateList.Count)
+            {
+                PhysicalObject trueVillain = null;
+                var suspect = room.updateList[room.updateIndex];
+                if (suspect is Explosion explosion) trueVillain = explosion.sourceObject;
+                else if (suspect is PhysicalObject villainObject) trueVillain = villainObject;
+                if (trueVillain != null)
+                {
+                    if (!OnlinePhysicalObject.map.TryGetValue(trueVillain.abstractPhysicalObject, out var onlineTrueVillain))
+                    {
+                        if (trueVillain.abstractPhysicalObject.type == AbstractPhysicalObject.AbstractObjectType.ScavengerBomb
+                            || trueVillain.abstractPhysicalObject.type == DLCSharedEnums.AbstractObjectType.SingularityBomb)
+                        {
+                            // bombs exit quickly, and that's ok.
+                            OnlinePhysicalObject onlineVillain = null;
+                            onlineCreature.RPCCreatureViolence(onlineVillain, hitChunk?.index, hitAppendage, directionAndMomentum, type, damage, stunBonus);
+                            return;
+                        }
+                        Error($"True villain {trueVillain} - {trueVillain.abstractPhysicalObject.ID} doesn't exist in online space!");
+                        orig(self, source, directionAndMomentum, hitChunk, hitAppendage, type, damage, stunBonus);
+                        return;
+                    }
+                    if ((onlineTrueVillain.owner.isMe || onlineTrueVillain.isPending) && !onlineApo.owner.isMe) // I'm violencing a remote entity
+                    {
+                        OnlinePhysicalObject onlineVillain = null;
+                        if (source != null && !OnlinePhysicalObject.map.TryGetValue(source.owner.abstractPhysicalObject, out onlineVillain))
+                        {
+                            Error($"Source {source.owner} - {source.owner.abstractPhysicalObject.ID} doesn't exist in online space!");
+                            orig(self, source, directionAndMomentum, hitChunk, hitAppendage, type, damage, stunBonus);
+                            return;
+                        }
+                        // Notify entity owner of violence
+                        onlineCreature.RPCCreatureViolence(onlineVillain, hitChunk?.index, hitAppendage, directionAndMomentum, type, damage, stunBonus);
+                        return; // Remote is gonna handle this
+                    }
+                    if (!onlineTrueVillain.owner.isMe) return; // Remote entity will send an event
+                }
+            }
+            orig(self, source, directionAndMomentum, hitChunk, hitAppendage, type, damage, stunBonus);
+        }
+
+        private void RoomRealizer_Update(On.RoomRealizer.orig_Update orig, RoomRealizer self)
+        {
+            if (OnlineManager.lobby != null && self.followCreature != null)
+            {
+                var origFollow = self.world.game.cameras[0].followAbstractCreature;
+                self.world.game.cameras[0].followAbstractCreature = self.followCreature;
+                orig(self);
+                self.world.game.cameras[0].followAbstractCreature = origFollow;
+                return;
+            }
+
+            orig(self);
+        }
+    }
+}

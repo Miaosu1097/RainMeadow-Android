@@ -1,0 +1,3 @@
+
+# Make translation files CRLF so Rain World can consistently parse them
+Mod/text/*/*.txt text eol=crlf

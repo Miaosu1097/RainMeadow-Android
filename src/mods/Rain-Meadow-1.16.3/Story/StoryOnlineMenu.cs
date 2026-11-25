@@ -1,0 +1,859 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
+using Menu;
+using Menu.Remix.MixedUI;
+using RWCustom;
+using Steamworks;
+using UnityEngine;
+
+namespace RainMeadow
+{
+    public class StoryOnlineMenu : SlugcatSelectMenu
+    {
+        //private CheckBox clientWantsToOverwriteSave;
+        private CheckBox friendlyFire;
+        private CheckBox reqCampaignSlug;
+        private MenuLabel? lobbyLabel, slugcatLabel;
+        private ButtonScroller? playerScrollBox;
+        private StoryMenuSlugcatSelector? slugcatSelector;
+        private SlugcatCustomization personaSettings;
+        private SlugcatStats.Name[] selectableSlugcats;
+        public SlugcatStats.Name?[] playerSelectedSlugcats;
+        private StoryGameMode storyGameMode;
+        private Vector2 restartCheckboxPos;
+        public FContainer? slugPageContainer; //this is sprite container for slugcat images to not overlap sprites when refreshing
+
+        //Chat constants
+        private const int maxVisibleMessages = 13;
+        private const float chatMessgesOffset = 20f;
+
+        //Chat variables
+        private List<MenuObject> chatSubObjects = [];
+        private int currentLogIndex = 0;
+        private bool isChatToggled = false;
+        private ButtonScroller.TextAnchor textAnchor;
+        private ChatTextBox chatTextBox;
+        private Vector2 chatTextBoxPos;
+        public NullLobbyError nullLobbyError;
+        public SlugcatStats.Name[] SelectableSlugcats
+        {
+            get
+            {
+                SetupSelectableSlugcats();
+                return selectableSlugcats;
+            }
+        }
+        public SlugcatStats.Name PlayerSelectedSlugcat
+        {
+            get
+            {
+                return playerSelectedSlugcats?[0] ?? slugcatColorOrder[slugcatPageIndex];
+            }
+            set
+            {
+                SetSelectedSlugcat(0, value);
+            }
+        }
+        public static int MaxVisibleOnList => 8;
+        public static float ButtonSpacingOffset => 8;
+        public static float ButtonSizeWithSpacing => ButtonSize + ButtonSpacingOffset;
+        public static float ButtonSize => 30;
+
+        public void SetCampaign(SlugcatStats.Name campaign)
+        {
+            storyGameMode.currentCampaign = campaign;
+            if (GetSaveGameData(indexFromColor(campaign)) is SaveGameData sgd)
+                storyGameMode.menuSaveState = new StoryLobbyData.MenuSaveStateState(sgd);
+            else
+                storyGameMode.menuSaveState = null;
+        }
+
+        public StoryOnlineMenu(ProcessManager manager) : base(manager)
+        {
+            playerSelectedSlugcats = new SlugcatStats.Name[4];
+            SetupSelectableSlugcats();
+            ID = OnlineManager.lobby.gameMode.MenuProcessId();
+            storyGameMode = (StoryGameMode)OnlineManager.lobby.gameMode;
+            storyGameMode.Sanitize();
+            SetCampaign(slugcatPages[slugcatPageIndex].slugcatNumber);
+            restartCheckboxPos = restartCheckbox.pos;
+            if (CurrLang == InGameTranslator.LanguageID.Russian)
+            {
+                restartCheckbox.pos.x += 50;
+                if (colorsCheckbox != null)
+                    colorsCheckbox.pos.x += 50;
+            }
+            ModifyExistingMenuItems();
+
+            if (ModManager.JollyCoop)
+            {
+                for (int i = 0; i < playerSelectedSlugcats.Length; i++)
+                {
+                    if (ModManager.JollyCoop && i < manager.rainWorld.options.jollyPlayerOptionsArray.Length)
+                    {
+                        manager.rainWorld.options.jollyPlayerOptionsArray[i].playerClass = storyGameMode.currentCampaign;
+                    }
+                }
+
+                if (base.CheckJollyCoopAvailable(slugcatColorOrder[slugcatPageIndex]))
+                {
+                    AddJollyButtons();
+                }
+                else if (colorChecked)
+                {
+                    AddColorButtons();
+                }
+            }
+
+            RMOverlayHUD.GetOverlay()?.DestroyChatHUD();
+            this.textAnchor = RainMeadow.rainMeadowOptions.ChatTextDownscroll.Value
+                ? ButtonScroller.TextAnchor.Bottom
+                : ButtonScroller.TextAnchor.Top;
+
+            if (OnlineManager.lobby.isOwner)
+            {
+                storyGameMode.requireCampaignSlugcat = false;
+                storyGameMode.saveToDisk = true;
+
+                if (MatchmakingManager.currentInstance is SteamMatchmakingManager steamMatchmakingManager)
+                    SteamMatchmaking.SetLobbyData(steamMatchmakingManager.lobbyID, MatchmakingManager.CAMPAIGN_KEY, "");
+            }
+            else
+            {
+                SetupClientOptions();
+            }
+
+            // HACK: force-register MMFEnums.SliderID because god is dead and we have killed them
+            // turns out god not dead
+            //MoreSlugcats.MMFEnums.SliderID.RegisterValues();
+
+            SetupOnlineCustomization();
+
+            SetupOnlineMenuItems();
+            UpdatePlayerList();
+
+            slugcatPageIndex = indexFromColor(storyGameMode.currentCampaign);
+            UpdateSelectedSlugcatInMiscProg();
+
+            MatchmakingManager.OnPlayerListReceived += OnlineManager_OnPlayerListReceived;
+
+            ChatTextBox.OnShutDownRequest += ResetChatInput;
+            ChatLogManager.MessageLogged += OnMessageLogged;
+        }
+
+        public void SetupSelectableSlugcats()
+        {
+            if (selectableSlugcats == null)
+            {
+                var SelectableSlugcatsEnumerable = slugcatColorOrder.AsEnumerable();
+                if (ModManager.MSC)
+                {
+                    if (!SelectableSlugcatsEnumerable.Contains(MoreSlugcats.MoreSlugcatsEnums.SlugcatStatsName.Slugpup))
+                    {
+                        SelectableSlugcatsEnumerable = SelectableSlugcatsEnumerable.Append(MoreSlugcats.MoreSlugcatsEnums.SlugcatStatsName.Slugpup);
+                    }
+                }
+                selectableSlugcats = SelectableSlugcatsEnumerable.ToArray();
+            }
+        }
+
+        public void SetSelectedSlugcat(int player, SlugcatStats.Name slugcat)
+        {
+            if ((playerSelectedSlugcats[player] != slugcat && playerSelectedSlugcats[player] != null) || (playerSelectedSlugcats[player] == null && slugcatColorOrder[slugcatPageIndex] != slugcat))
+            {
+                if (ModManager.JollyCoop)
+                {
+                    manager.rainWorld.options.jollyPlayerOptionsArray[player].playerClass = slugcat;
+                }
+                playerSelectedSlugcats[player] = slugcat == slugcatColorOrder[slugcatPageIndex] ? null : slugcat;
+                storyGameMode.preferredSlug = slugcat;
+
+                if (player == 0)
+                {
+                    if (colorInterface is not null)
+                    {
+                        RemoveColorButtons();
+                        AddColorButtons();
+                    }
+                }
+            }
+        }
+
+        public new void StartGame(SlugcatStats.Name storyGameCharacter)
+        {
+
+            for (int i = 1; i < storyGameMode.avatarCount; i++)
+                this.manager.rainWorld.RequestPlayerSignIn(i, null);
+
+            if (OnlineManager.lobby.isOwner)
+            {
+                SetCampaign(storyGameCharacter);
+            }
+
+            var jollyallowed = ModManager.JollyCoop && base.CheckJollyCoopAvailable(slugcatColorOrder[slugcatPageIndex]);
+            storyGameMode.avatarCount = jollyallowed ? manager.rainWorld.options.JollyPlayerCount : 1;
+            if (jollyallowed) PlayerGraphics.PopulateJollyColorArray(PlayerSelectedSlugcat);
+
+            for (int i = 1; i < storyGameMode.avatarCount; i++)
+            {
+                manager.rainWorld.ActivatePlayer(i);
+            }
+            for (int j = storyGameMode.avatarCount; j < 4; j++)
+            {
+                manager.rainWorld.DeactivatePlayer(j);
+            }
+
+            for (int i = 0; i < storyGameMode.avatarSettings.Length; i++)
+            {
+                storyGameMode.avatarSettings[i].playingAs = storyGameMode.currentCampaign;
+                if (!storyGameMode.requireCampaignSlugcat && (playerSelectedSlugcats[i] is SlugcatStats.Name name))
+                {
+                    storyGameMode.avatarSettings[i].playingAs = name;
+                }
+
+                if ((storyGameMode.avatarCount > 1) && jollyallowed)
+                {
+                    storyGameMode.avatarSettings[i].nickname = OnlineManager.mePlayer.id.name + ":" + JollyCoop.JollyCustom.GetPlayerName(i);
+                }
+
+                if (jollyallowed)
+                {
+                    if (manager.rainWorld.options.jollyColorMode == Options.JollyColorMode.CUSTOM)
+                    {
+                        storyGameMode.avatarSettings[i].currentColors = new List<Color>
+                            {
+                                manager.rainWorld.options.jollyPlayerOptionsArray[i].GetBodyColor(),
+                                manager.rainWorld.options.jollyPlayerOptionsArray[i].GetFaceColor(),
+                                manager.rainWorld.options.jollyPlayerOptionsArray[i].GetUniqueColor()
+                            };
+
+                    }
+                    else if (manager.rainWorld.options.jollyColorMode == Options.JollyColorMode.AUTO)
+                    {
+                        if (i == 0)
+                        {
+                            storyGameMode.avatarSettings[i].currentColors = [.. PlayerGraphics.DefaultBodyPartColorHex(storyGameMode.avatarSettings[i].playingAs).Select(Custom.hexToColor)];
+                        }
+                        else
+                        {
+                            storyGameMode.avatarSettings[i].currentColors = new List<Color>
+                            {
+                                PlayerGraphics.JollyColor(i, 0),
+                                PlayerGraphics.JollyColor(i, 1),
+                                PlayerGraphics.JollyColor(i, 2)
+                            };
+                        }
+                    }
+                    else
+                    {
+                        storyGameMode.avatarSettings[i].currentColors = [.. PlayerGraphics.DefaultBodyPartColorHex(storyGameMode.avatarSettings[i].playingAs).Select(Custom.hexToColor)];
+                    }
+                    storyGameMode.avatarSettings[i].fakePup = manager.rainWorld.options.jollyPlayerOptionsArray[i].isPup;
+                }
+                else
+                {
+                    // TODO: seperate custom colors for each avatar
+                    storyGameMode.avatarSettings[i].currentColors = manager.rainWorld.progression.GetCustomColors(storyGameMode.avatarSettings[i].playingAs); //abt colors, color config updates to campaign when required campaign is on. Client side, the host still needs to be in the menu to update it so they will notice the color config update
+                    storyGameMode.avatarSettings[i].fakePup = false;
+                }
+
+            }
+
+
+            // TODO: figure out how to reuse vanilla StartGame
+            // * override singleplayer custom colours
+            // * fix intro cutscenes messing with resource acquisition
+            // ? how to deal with statistics screen (not supposed to continue, we should require wipe)
+
+            manager.arenaSitting = null;
+
+            if (restartChecked)
+            {
+                manager.rainWorld.progression.WipeSaveState(storyGameMode.currentCampaign);
+                manager.menuSetup.startGameCondition = ProcessManager.MenuSetup.StoryGameInitCondition.New;
+
+                if (OnlineManager.lobby.isOwner)
+                {
+                    storyGameMode.campaignGeneration++;
+                    storyGameMode.spinningTopEncounters.Clear();
+                    storyGameMode.hostRippleRaiser.Clear();
+                }
+            }
+
+            else
+            {
+                manager.menuSetup.startGameCondition = ProcessManager.MenuSetup.StoryGameInitCondition.Load;
+            }
+            manager.rainWorld.progression.ClearOutSaveStateFromMemory();
+            manager.RequestMainProcessSwitch(ProcessManager.ProcessID.Game);
+
+            if (MatchmakingManager.currentInstance is SteamMatchmakingManager steamMatchmakingManager)
+                SteamMatchmaking.SetLobbyData(steamMatchmakingManager.lobbyID, MatchmakingManager.CAMPAIGN_KEY, storyGameMode.currentCampaign.value);
+        }
+        public override void Update()
+        {
+            if (nullLobbyError != null)
+            {
+                base.Update();
+                return;
+            }
+            if (OnlineManager.lobby == null && nullLobbyError == null)
+            {
+                nullLobbyError = new NullLobbyError(this, this.pages[0], new Vector2(manager.rainWorld.options.ScreenSize.x / 2f - 240f + (1366f - manager.rainWorld.options.ScreenSize.x) / 2f, 224f), new Vector2(480f, 320f), "Story lobby is null! Exiting...", false);
+                this.pages[0].subObjects.Add(nullLobbyError);
+                return;
+            }
+            var jollyallowed = false;
+            if (ModManager.JollyCoop)
+            {
+                jollyallowed = base.CheckJollyCoopAvailable(slugcatColorOrder[slugcatPageIndex]);
+                storyGameMode.avatarCount = jollyallowed ? manager.rainWorld.options.JollyPlayerCount : 1;
+                if (jollyallowed && jollyToggleConfigMenu is null)
+                {
+                    AddJollyButtons();
+                }
+                else if ((!jollyallowed) && (jollyToggleConfigMenu is not null))
+                {
+                    RemoveJollyButtons();
+                }
+
+                if (colorsCheckbox != null)
+                {
+                    if (jollyallowed && colorInterface is not null)
+                    {
+                        RemoveColorButtons();
+                    }
+                    else if (colorChecked && (!jollyallowed) && (colorInterface is null))
+                    {
+                        AddColorButtons();
+                    }
+
+                    colorsCheckbox.buttonBehav.greyedOut = jollyallowed;
+                }
+            }
+
+
+            if (ChatTextBox.blockInput)
+            {
+                ChatTextBox.blockInput = false;
+                if ((RWInput.CheckPauseButton(0) || Input.GetKeyDown(KeyCode.Escape)) && !lastPauseButton)
+                {
+                    PlaySound(SoundID.MENY_Already_Selected_MultipleChoice_Clicked);
+                    ToggleChat(false);
+                    lastPauseButton = true;
+                }
+                ChatTextBox.blockInput = true;
+            }
+
+            if (storyGameMode.needMenuSaveUpdate)
+            {
+                RainMeadow.Debug("page refresh");
+                storyGameMode.needMenuSaveUpdate = false;
+
+                if (OnlineManager.lobby.isOwner && storyGameMode.shouldMineForSaveData)
+                {
+                    RainMeadow.Debug("mine for saveData");
+                    storyGameMode.shouldMineForSaveData = false;
+                    for (int i = 0; i < slugcatColorOrder.Count; i++)
+                    {
+                        saveGameData[slugcatColorOrder[i]] = MineForSaveData(manager, slugcatColorOrder[i]);
+                    }
+                }
+
+                RefreshPages();
+            }
+
+
+            base.Update();
+
+            if (ModManager.JollyCoop)
+            {
+                this.storyGameMode.friendlyFire = manager.rainWorld.options.friendlyFire;
+                if (jollyallowed)
+                {
+                    this.jollyPlayerCountLabel.text = base.Translate("Players: <num_p>").Replace("<num_p>", Custom.rainWorld.options.JollyPlayerCount.ToString());
+                    this.RefreshJollySummary();
+                }
+
+            }
+
+
+            if (this.isChatToggled)
+            {
+                if (Input.GetKey(KeyCode.UpArrow))
+                {
+                    if (currentLogIndex < ChatLogManager.chatLog.Count - 1)
+                    {
+                        currentLogIndex++;
+                        UpdateLogDisplay();
+                    }
+                }
+                else if (Input.GetKey(KeyCode.DownArrow))
+                {
+                    if (currentLogIndex > 0)
+                    {
+                        currentLogIndex--;
+                        UpdateLogDisplay();
+                    }
+                }
+            }
+
+            if (OnlineManager.lobby == null) return;
+            if (OnlineManager.lobby.isOwner)
+            {
+                nextButton.buttonBehav.greyedOut = false;
+                prevButton.buttonBehav.greyedOut = false;
+
+
+                SetCampaign(slugcatPages[slugcatPageIndex].slugcatNumber);
+                storyGameMode.region = CurrentRegion();
+                if (startButton != null)
+                {
+                    startButton.buttonBehav.greyedOut = OnlineManager.lobby.clientSettings.Values.Any(cs => cs.inGame);
+                }
+
+            }
+            else
+            {
+
+                nextButton.buttonBehav.greyedOut = true;
+                prevButton.buttonBehav.greyedOut = true;
+
+                // if (onlineDifficultyLabel == null)
+                // {
+                //     onlineDifficultyLabel = new MenuLabel(this, pages[0], $"{GetCurrentCampaignName()}", new Vector2(startButton.pos.x - 100f, startButton.pos.y + 100f), new Vector2(200f, 30f), bigText: true);
+                //     onlineDifficultyLabel.label.alignment = FLabelAlignment.Center;
+                //     onlineDifficultyLabel.label.alpha = 0.5f;
+                //     pages[0].subObjects.Add(onlineDifficultyLabel);
+                // }
+
+                if (startButton != null)
+                {
+                    startButton.buttonBehav.greyedOut = !storyGameMode.canJoinGame;
+                }
+                // if (onlineDifficultyLabel != null)
+                // {
+                //     onlineDifficultyLabel.text = GetCurrentCampaignName() + (string.IsNullOrEmpty(storyGameMode.region) ? Translate(" - New Game") : " - " + Translate(storyGameMode.region));
+                // }
+
+                if (storyGameMode.currentCampaign != slugcatColorOrder[slugcatPageIndex])
+                {
+                    var currentcampaignindex = indexFromColor(storyGameMode.currentCampaign);
+                    if (currentcampaignindex > -1)
+                    {
+                        int moveInPage = currentcampaignindex - slugcatPageIndex;
+                        int cycleAroundleft = moveInPage - slugcatColorOrder.Count;
+                        int cycleAroundRight = moveInPage + slugcatColorOrder.Count;
+                        int bestCycleAround = Mathf.Abs(cycleAroundleft) < Mathf.Abs(cycleAroundRight) ? cycleAroundleft : cycleAroundRight;
+                        if (Mathf.Abs(moveInPage) < Mathf.Abs(bestCycleAround))
+                        {
+                            scroll = -moveInPage;
+                        }
+                        else
+                        {
+                            scroll = -bestCycleAround;
+                        }
+
+                        slugcatPageIndex = currentcampaignindex;
+                        quedSideInput = 0;
+                        UpdateSelectedSlugcatInMiscProg();
+                    }
+                }
+            }
+            if (storyGameMode.requireCampaignSlugcat)
+            {
+                RemoveSlugcatList();
+                for (int i = 0; i < playerSelectedSlugcats.Length; i++)
+                {
+                    if (ModManager.JollyCoop && i < manager.rainWorld.options.jollyPlayerOptionsArray.Length)
+                    {
+                        manager.rainWorld.options.jollyPlayerOptionsArray[i].playerClass = storyGameMode.currentCampaign;
+                    }
+
+                    SetSelectedSlugcat(i, storyGameMode.currentCampaign);
+                }
+            }
+            else
+            {
+                SetupSlugcatList();
+            }
+            if (slugcatSelector != null)
+            {
+                slugcatSelector.Slug = PlayerSelectedSlugcat;
+            }
+
+        }
+
+        public override void ShutDownProcess()
+        {
+            this.isChatToggled = false;
+            ResetChatInput(); //ensure chat input is properly shutdown
+            ChatTextBox.OnShutDownRequest -= ResetChatInput;
+            ChatLogManager.MessageLogged -= OnMessageLogged;
+
+            RainMeadow.DebugMe();
+            if ((manager.upcomingProcess != ProcessManager.ProcessID.Game) &&
+                (manager.upcomingProcess != ProcessManager.ProcessID.InputOptions)) // if join on sleep/deathscreen this needs to be added here as well
+            {
+                OnlineManager.LeaveLobby();
+            }
+            RainMeadow.rainMeadowOptions._SaveConfigFile(); //im just gonna allow this for now, since idk updates in slider set value
+            base.ShutDownProcess();
+        }
+        public override string UpdateInfoText()
+        {
+            return selectedObject is IHaveADescription descObj ? descObj.Description : base.UpdateInfoText();
+        }
+        private void UpdatePlayerList()
+        {
+            playerScrollBox?.RemoveAllButtons(false);
+            if (playerScrollBox == null)
+            {
+                playerScrollBox = new(this, pages[0], new(194, 553 - 30 - ButtonScroller.CalculateHeightBasedOnAmtOfButtons(MaxVisibleOnList, ButtonSize, ButtonSpacingOffset)), MaxVisibleOnList, 200, new(ButtonSize, ButtonSpacingOffset));
+                pages[0].subObjects.Add(playerScrollBox);
+            }
+            foreach (OnlinePlayer player in OnlineManager.players)
+            {
+                StoryMenuPlayerButton playerButton = new(this, playerScrollBox, player, OnlineManager.lobby.isOwner && player != OnlineManager.lobby.owner);
+                playerScrollBox.AddButtons(playerButton);
+            }
+            playerScrollBox.ConstrainScroll();
+
+        }
+
+        private void OnlineManager_OnPlayerListReceived(PlayerInfo[] players)
+        {
+            if (RainMeadow.isStoryMode(out var _))
+            {
+                UpdatePlayerList();
+            }
+        }
+
+        public string GetCurrentCampaignName() => Translate("Current Campaign: ") + Translate(SlugcatStats.getSlugcatName(storyGameMode.currentCampaign));
+
+        private string CurrentRegion()
+        {
+            try
+            {
+                var shelterName = saveGameData[storyGameMode.currentCampaign]?.shelterName;
+                if (shelterName != null && shelterName.Length > 2)
+                {
+                    var s = Region.GetRegionFullName(shelterName.Substring(0, 2), storyGameMode.currentCampaign);
+                    if (s == "Unknown Region")
+                    {
+                        // watcher regions
+                        if (shelterName.Length > 4)
+                        {
+                            return Region.GetRegionFullName(shelterName.Substring(0, 4), storyGameMode.currentCampaign);
+                        }
+                        return s;
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                RainMeadow.Debug($"Error getting region name: {e}");
+            }
+            return "";
+        }
+
+        private void SetupSlugcatList()
+        {
+            Vector2 pos = new(394, 553);
+            if (slugcatLabel == null)
+            {
+                slugcatLabel = new(this, pages[0], Translate("Selected Slugcat").Replace("<LINE>", "\n"), pos, new(110, 30), true);
+                pages[0].subObjects.Add(slugcatLabel);
+            }
+            if (slugcatSelector == null)
+            {
+                //first player button is 30 pos below size of list. and list top part is 30 below the title. Plus
+                slugcatSelector = new(this, pages[0], new(pos.x, pos.y - (ButtonSize * 2)), MaxVisibleOnList, ButtonSpacingOffset, PlayerSelectedSlugcat, GetSlugcatSelectionButtons);
+                pages[0].subObjects.Add(slugcatSelector);
+            }
+            if (storyGameMode.preferredSlug != null)
+            {
+                SetSelectedSlugcat(0, storyGameMode.preferredSlug);
+            }
+
+        }
+
+        void RefreshPages()
+        {
+            if (OnlineManager.lobby.isOwner)
+            {
+                restartCheckbox.IDString = "RESTART";
+                restartCheckbox.label.text = Translate("Restart game").Replace("<LINE>", "\r\n");
+
+                pages.RemoveRange(1, slugcatPages.Count);
+                for (int i = 0; i < slugcatPages.Count; i++)
+                {
+                    slugcatPages[i].RemoveSprites();
+                }
+                slugcatPages.Clear();
+                for (int i = 0; i < slugcatColorOrder.Count; i++)
+                {
+                    if (GetSaveGameData(i) != null)
+                    {
+                        slugcatPages.Add(new SlugcatPageContinue(this, null, 1 + i, slugcatColorOrder[i]));
+                    }
+                    else
+                    {
+                        slugcatPages.Add(new SlugcatPageNewGame(this, null, 1 + i, slugcatColorOrder[i]));
+                    }
+
+                    pages.Add(slugcatPages[i]);
+                }
+            }
+            else
+            {
+                int pageindex = 1 + indexFromColor(storyGameMode.currentCampaign);
+                if (pageindex != 0)
+                {
+                    pages[pageindex].RemoveSprites();
+                    pages.RemoveAt(pageindex);
+                    slugcatPages.RemoveAt(pageindex - 1);
+
+                    SlugcatPage page = (storyGameMode.menuSaveGameData != null) ? new SlugcatPageContinue(this, null, pageindex, storyGameMode.currentCampaign) : new SlugcatPageNewGame(this, null, pageindex, storyGameMode.currentCampaign);
+                    pages.Insert(pageindex, page);
+                    slugcatPages.Insert(pageindex - 1, page);
+                }
+                restartCheckbox.IDString = "CLIENTSAVERESET";
+                restartCheckbox.label.text = Regex.Replace(Translate("Sync Save"), "<LINE>", "\r\n");
+
+            }
+
+            UpdatePlayerList();
+
+            if (!storyGameMode.requireCampaignSlugcat)
+            {
+                RemoveSlugcatList();
+                SetupSlugcatList();
+            }
+
+            UpdateSelectedSlugcatInMiscProg();
+            pages[0].mouseCursor.BumToFront(); //add cursor container back
+        }
+
+        private void RemoveSlugcatList()
+        {
+            pages[0].ClearMenuObject(ref slugcatLabel);
+            pages[0].ClearMenuObject(ref slugcatSelector);
+        }
+
+        private void SetupOnlineCustomization()
+        {
+            personaSettings = storyGameMode.avatarSettings[0];
+        }
+
+        private void SetupOnlineMenuItems()
+        {
+            // Player lobby label
+            lobbyLabel = new MenuLabel(this, pages[0], Translate("LOBBY"), new Vector2(194, 553), new(110, 30), true);
+            pages[0].subObjects.Add(lobbyLabel);
+
+            var invite = new SimplerButton(this, pages[0], Translate("Invite Friends"), new(nextButton.pos.x + 80f, 50f), new(110, 35));
+            invite.OnClick += (_) =>
+            {
+                SimpleDialogBoxNotify dialogBox = new(this, pages[0], "The Steam invite feature is currently unstable, and may not work properly.\nConsider using a public lobby with a password instead.", buttonText: "OKAY");
+                MatchmakingManager.currentInstance.OpenInvitationOverlay();
+            };
+            pages[0].subObjects.Add(invite);
+
+            this.chatTextBoxPos = new Vector2(this.manager.rainWorld.options.ScreenSize.x * 0.001f + (1366f - this.manager.rainWorld.options.ScreenSize.x) / 2f, 0);
+            var toggleChat = new SimplerSymbolButton(this, pages[0], "Kill_Slugcat", "", this.chatTextBoxPos);
+            toggleChat.OnClick += (_) =>
+            {
+                ToggleChat(!this.isChatToggled);
+                if (input.controllerType == Options.ControlSetup.Preset.KeyboardSinglePlayer)
+                {
+                    selectedObject = null;
+                }
+            };
+            pages[0].subObjects.Add(toggleChat);
+
+            var sameSpotOtherSide = restartCheckboxPos.x - startButton.pos.x;
+            bool friendlyFireNeedMoreSpace = CurrLang == InGameTranslator.LanguageID.Russian || CurrLang == InGameTranslator.LanguageID.Japanese;
+            bool leffBoxesNeedMoreSpace = InGameTranslator.LanguageID.UsesLargeFont(CurrLang);
+
+            friendlyFire = new CheckBox(this, pages[0], this, new Vector2(startButton.pos.x - sameSpotOtherSide + (leffBoxesNeedMoreSpace ? 30f : 0), restartCheckboxPos.y + 30), (friendlyFireNeedMoreSpace ? 150f : 70f) + (leffBoxesNeedMoreSpace ? 30f : 0), Regex.Replace(Translate("Friendly Fire"), "<LINE>", "\r\n"), "ONLINEFRIENDLYFIRE", false);
+            reqCampaignSlug = new CheckBox(this, pages[0], this, new Vector2(startButton.pos.x - sameSpotOtherSide + (leffBoxesNeedMoreSpace ? 30f : 0), restartCheckboxPos.y), leffBoxesNeedMoreSpace ? 180f : 150f, Regex.Replace(Translate("Require Campaign Slugcat"), "<LINE>", "\r\n"), "CAMPAIGNSLUGONLY", false);
+            if (!OnlineManager.lobby.isOwner)
+            {
+                friendlyFire.buttonBehav.greyedOut = true;
+                reqCampaignSlug.buttonBehav.greyedOut = true;
+            }
+            pages[0].subObjects.Add(friendlyFire);
+            pages[0].subObjects.Add(reqCampaignSlug);
+        }
+
+        public void ToggleChat(bool toggled)
+        {
+            this.isChatToggled = toggled;
+            this.ResetChatInput();
+            this.UpdateLogDisplay();
+        }
+
+        private void ModifyExistingMenuItems()
+        {
+            foreach (var obj in pages[0].subObjects) // unfortunate locally declared variable.
+            {
+                if (obj is SimpleButton button && button.signalText == "BACK")
+                {
+                    button.pos = new Vector2(prevButton.pos.x - 140f, 50f);
+                }
+            }
+        }
+
+        private void SetupClientOptions()
+        {
+            //restartCheckbox = new CheckBox(this, pages[0], this, restartCheckboxPos, 70f, Translate("Sync Save"), "CLIENTSAVERESET", false);
+            restartCheckbox.label.text = Regex.Replace(Translate("Sync Save"), "<LINE>", "\r\n");
+            restartCheckbox.IDString = "CLIENTSAVERESET";
+            //pages[0].subObjects.Add(clientWantsToOverwriteSave);
+        }
+        public StoryMenuSlugcatButton[] GetSlugcatSelectionButtons(StoryMenuSlugcatSelector slugcatSelector, ButtonScroller buttonScroller)
+        {
+            List<StoryMenuSlugcatButton> slugcatButtons = [];
+            for (int i = 0; i < SelectableSlugcats.Length; i++)
+            {
+                if (SelectableSlugcats[i] != slugcatSelector.Slug)
+                {
+                    StoryMenuSlugcatButton storyMenuSlugcatButton = new(this, buttonScroller, SelectableSlugcats[i], (scug) =>
+                    {
+                        PlayerSelectedSlugcat = scug;
+                        slugcatSelector.OpenCloseList(false, true, true);
+                    });
+                    slugcatButtons.Add(storyMenuSlugcatButton);
+                }
+            }
+            return [.. slugcatButtons];
+        }
+        private void UpdateUponChangingSlugcat(SlugcatStats.Name scug)
+        {
+            if (colorsCheckbox != null)
+            {
+                colorsCheckbox.Checked = colorChecked; //this.IsCustomColorEnabled(scug); //automatically opens color interface if enabled
+            }
+        }
+
+        public void OnMessageLogged(string user, string message)
+        {
+            if (!Active)
+                return;
+
+            if (OnlineManager.lobby == null) return;
+            if (ChatLogManager.ShouldMuteMessageFromUser(user)) return;
+
+            MatchmakingManager.currentInstance.FilterMessage(ref message);
+            if (ChatLogManager.ShouldPingFromMessage(user, message))
+            {
+                manager.menuMic.PlaySound(RainMeadow.Ext_SoundID.RM_Slugcat_Call, 0f, 1f, 1.2f);
+            }
+            if (this.isChatToggled && ChatLogManager.ShouldMakeSoundFromMessage(user, message, out bool quiet))
+            {
+                manager.menuMic.PlaySound(
+                    quiet ? SoundID.MENU_First_Scroll_Tick : SoundID.MENU_Scroll_Tick,
+                    0,
+                    quiet ? 0.7f : 1.5f,
+                    quiet ? 0.7f : 0.6f
+                );
+            }
+            this.UpdateLogDisplay();
+        }
+
+        internal void ResetChatInput()
+        {
+            this.chatTextBox?.DelayedUnload(0.1f);
+            pages[0].ClearMenuObject(ref this.chatTextBox);
+            if (this.isChatToggled && this.chatTextBox is null)
+            {
+                this.chatTextBox = new ChatTextBox(this, pages[0], "", new Vector2(this.chatTextBoxPos.x + 24, 0), new(575, 30));
+                pages[0].subObjects.Add(this.chatTextBox);
+            }
+            if (OnlineManager.lobby.clientSettings.TryGetValue(OnlineManager.mePlayer, out var cs))
+            {
+                cs.isInteracting = false;
+            }
+        }
+
+        internal void UpdateLogDisplay()
+        {
+            if (!this.isChatToggled)
+            {
+                var list = new List<MenuObject>();
+                foreach (var e in chatSubObjects)
+                {
+                    e.RemoveSprites();
+                    list.Add(e);
+                }
+                foreach (var e in list) pages[0].RemoveSubObject(e);
+                chatSubObjects.Clear(); //do not keep gc stuff!
+                return;
+            }
+            if (ChatLogManager.chatLog.Count > 0)
+            {
+                int startIndex = Mathf.Clamp(ChatLogManager.chatLog.Count - maxVisibleMessages - currentLogIndex, 0, ChatLogManager.chatLog.Count - maxVisibleMessages);
+                var logsToRemove = new List<MenuObject>();
+
+                // First, collect all the logs to remove
+                foreach (var log in chatSubObjects)
+                {
+                    log.RemoveSprites();
+                    logsToRemove.Add(log);
+                }
+
+                // Now remove the logs from the original collection
+                foreach (var log in logsToRemove)
+                {
+                    chatSubObjects.Remove(log);
+                    pages[0].RemoveSubObject(log);
+                }
+
+                ChatLogManager.UpdatePlayerColors();
+
+                var visibleLog = ChatLogManager.chatLog.Skip(startIndex).Take(maxVisibleMessages);
+                float yOffSet = textAnchor == ButtonScroller.TextAnchor.Top ? 0 : (maxVisibleMessages - 1 - visibleLog.Count()) * chatMessgesOffset;
+
+                foreach (var (username, message) in visibleLog)
+                {
+                    ChatLogManager.SystemMessageType? systemMessageType = ChatLogManager.SysMesSignatureToType(username);
+                    if (systemMessageType is not null)
+                    {
+                        // system message
+                        var messageLabel = new MenuLabel(this, pages[0], message,
+                            new Vector2(1366f - manager.rainWorld.screenSize.x - 660f, 330f - yOffSet),
+                            new Vector2(manager.rainWorld.screenSize.x, 30f), false);
+                        messageLabel.label.alignment = FLabelAlignment.Left;
+                        messageLabel.label.color = ChatLogManager.GetColorOfSystemMessage(systemMessageType);
+                        chatSubObjects.Add(messageLabel);
+                        pages[0].subObjects.Add(messageLabel);
+                    }
+                    else
+                    {
+                        var color = ChatLogManager.GetDisplayPlayerColor(username);
+
+                        var usernameLabel = new MenuLabel(this, pages[0], username,
+                            new Vector2(1366f - manager.rainWorld.screenSize.x - 660f, 330f - yOffSet),
+                            new Vector2(manager.rainWorld.screenSize.x, 30f), false);
+                        usernameLabel.label.alignment = FLabelAlignment.Left;
+                        usernameLabel.label.color = color;
+                        chatSubObjects.Add(usernameLabel);
+                        pages[0].subObjects.Add(usernameLabel);
+
+                        var usernameWidth = LabelTest.GetWidth(usernameLabel.label.text);
+                        var messageLabel = new MenuLabel(this, pages[0], $": {message}",
+                            new Vector2(1366f - manager.rainWorld.screenSize.x - 660f + usernameWidth + 2f, 330f - yOffSet),
+                            new Vector2(manager.rainWorld.screenSize.x, 30f), false);
+                        messageLabel.label.alignment = FLabelAlignment.Left;
+                        chatSubObjects.Add(messageLabel);
+                        pages[0].subObjects.Add(messageLabel);
+                    }
+                    yOffSet += chatMessgesOffset;
+                }
+            }
+        }
+    }
+}

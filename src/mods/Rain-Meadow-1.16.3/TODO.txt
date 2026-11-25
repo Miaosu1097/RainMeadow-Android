@@ -1,0 +1,44 @@
+﻿Rain Meadow
+Entities entities entities
+	
+	handle entities entering dens
+		could also be event-based
+		would maybe also have to handle the whole switchcase at "the end of the shortcut" when the creature then either enters a den or leaves the room or whatever
+	
+	handle grasps
+		grasps need to be sent around in a similar way entities are
+		the biggest problem is: can only send grasps once we've identified all entities involved
+		on entity-join, if all connected entities already join, then send grasps?
+		how do we handle entity leave from the non-owner side? because an entity that has grasps will try and move many things with it
+			how do we even detect that?
+		
+		if it's things that are moving together maybe the events should be just one event
+		"move with grabbed"
+		or maybe this should be the default, since ent.move DOES move things together??
+		how do I detect things that are being moved together?
+			.move is recursive isn't it
+			does the absgrasp know of the realgrasp?
+	
+	just disable grasps for now and crack on with persona-only stuff??
+		"I have failed and I'll move on with simpler things"
+
+	when scanning/tracking entities in room/world needs to skip if absentity.slatedfordeletion, game doesn't remove them from room until the room abstracts
+
+
+Mod auto installing / auto disabling
+	biggest issue: different region list
+		scenario: host that has ABC, guests have AB, BC and CA, host leaves nobody can take over hosting
+	enforced mod-sync on join lobby
+		anything that changes world folders
+		plus weird world-state changing chings like expedition/remix?
+	could use a whitelist maybe
+	could automate it some:
+		apply automatically, re-launch and re-join the lobby in question
+		disable all other mods temporarily, store old enabledlist, relaunch with right mods
+
+
+Imediate todo:
+
+on sleep
+	should wait release before enabling the start button
+

@@ -1,0 +1,127 @@
+using MoreSlugcats;
+using RainMeadow.Generics;
+using RWCustom;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace RainMeadow
+{
+    public class RealizedCreatureState : RealizedPhysicalObjectState
+    {
+        [OnlineField(nullable = true)]
+        private DynamicOrderedStates<GraspRef> grasps;
+        [OnlineField(group = "counters")]
+        public short stun;
+        [OnlineField(nullable = true)]
+        private IntVector2? enteringShortcut;
+        [OnlineField]
+        private WorldCoordinate transportationDestination;
+        [OnlineField(nullable = true)]
+        public ArtificialIntelligenceState? artificialIntelligenceState;
+
+        public RealizedCreatureState() { }
+        public RealizedCreatureState(OnlineCreature onlineCreature) : base(onlineCreature)
+        {
+            var creature = onlineCreature.apo.realizedObject as Creature;
+            grasps = new(creature.grasps?.Where(g => g != null && OnlinePhysicalObject.map.TryGetValue(g.grabbed.abstractPhysicalObject, out _))
+                                        .Select(g => GraspRef.map.GetValue(g, GraspRef.FromGrasp))
+                                        .ToList() ?? new());
+            stun = (short)creature.stun;
+            enteringShortcut = creature.enteringShortCut;
+            transportationDestination = creature.NPCTransportationDestination;
+            artificialIntelligenceState = GetCreatureAIState(onlineCreature);
+        }
+
+        protected virtual ArtificialIntelligenceState? GetCreatureAIState(OnlineCreature onlineCreature)
+        {
+            if (onlineCreature.apo is AbstractCreature creature && creature.creatureTemplate.AI)
+            {
+                if (creature.creatureTemplate.type == MoreSlugcats.MoreSlugcatsEnums.CreatureTemplateType.SlugNPC)
+                {
+                    return new ArtificialIntelligenceState(onlineCreature.abstractCreature.abstractAI.RealAI);
+                }
+            }
+            return null;
+        }
+
+        // see RealizedPhysicalObject constructor.
+        override public bool ShouldSyncChunks(PhysicalObject po) {
+            if(po is Creature critter) {
+                if (critter.inShortcut) return false;
+            }
+
+            return true;
+        }
+
+        public override void ReadTo(OnlineEntity onlineEntity)
+        {
+            base.ReadTo(onlineEntity);
+            if (onlineEntity is not OnlineCreature onlineCreature) { RainMeadow.Error("target not onlinecreature: " + onlineEntity); return; }
+            if (onlineCreature.apo.realizedObject is not Creature creature) { RainMeadow.Trace("target not realized: " + onlineEntity); return; }
+
+            creature.stun = stun;
+            creature.enteringShortCut = enteringShortcut;
+            creature.NPCTransportationDestination = transportationDestination;
+
+            if (artificialIntelligenceState != null)
+            {
+                if (ModManager.MSC && creature.Template.type == MoreSlugcats.MoreSlugcatsEnums.CreatureTemplateType.SlugNPC && creature is Player player)
+                {
+                    if (player.abstractCreature.abstractAI == null)
+                    {
+                        player.abstractCreature.abstractAI = new SlugNPCAbstractAI(player.abstractCreature.world, player.abstractCreature);
+                    }
+                    if (player.abstractCreature.abstractAI.RealAI == null)
+                    {
+                        player.abstractCreature.abstractAI.RealAI = new SlugNPCAI(player.abstractCreature, player.abstractCreature.world);
+                    }
+
+                    artificialIntelligenceState.ReadTo(player.AI);
+                }
+            }
+
+            if (creature.grasps != null)
+            {
+                bool[] found = new bool[creature.grasps.Length];
+                RainMeadow.Trace($"incoming grasps for {onlineEntity}: " + grasps.list.Count);
+                bool graspUpdated = false;
+                for (int i = 0; i < grasps.list.Count; i++)
+                {
+                    var grasp = grasps.list[i];
+                    var grabbed = grasp.onlineGrabbed.FindEntity() as OnlinePhysicalObject; // lookup once, use multiple times
+                    if (grabbed?.apo.realizedObject is null) continue;
+
+                    if (!grabbed.apo.realizedObject.grabbedBy.Any()) grabbed.ClearLock("grasp");
+                    if (grabbed.IsLocked("grasp")) continue;
+
+                    var foundat = Array.FindIndex(creature.grasps, s => grasp.EqualsGrasp(s, grabbed.apo.realizedObject));
+                    if (foundat == -1)
+                    {
+                        RainMeadow.Trace("incoming grasps not found: " + grasp);
+                        grasp.MakeGrasp(creature, grabbed.apo.realizedObject);
+                        graspUpdated = true;
+                        found[grasp.graspUsed] = true;
+                    }
+                    else
+                    {
+                        RainMeadow.Trace("incoming grasps found: " + grasp + " at index " + foundat);
+                        graspUpdated = true;
+                        found[foundat] = true;
+                    }
+                }
+                for (int i = found.Length - 1; i >= 0; i--)
+                {
+                    if (!found[i] && creature.grasps[i] != null && OnlinePhysicalObject.map.TryGetValue(creature.grasps[i].grabbed.abstractPhysicalObject, out _))
+                    {
+                        RainMeadow.Trace("releasing grasp because not found at index " + i);
+                        GraspRef.map.GetValue(creature.grasps[i], GraspRef.FromGrasp).Release(creature.grasps[i]);
+                        graspUpdated = true;
+                    }
+                }
+    
+                if (graspUpdated && creature is Scavenger scav) scav.PlaceAllGrabbedObjectsInCorrectContainers();
+            }
+        }
+    }
+}

@@ -1,0 +1,34 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build",
+			"command": "dotnet",
+			"type": "process",
+			"args": ["build", "${workspaceFolder}/Rain Meadow.csproj"],
+			"problemMatcher": "$msCompile",
+			"group": {
+				"kind": "build"
+			}
+		},
+		{
+			"label": "Build & Run (Steam) (Linux Only)",
+			"command": "steam",
+			"type": "process",
+			"args": ["steam://rungameid/312520"],
+			"dependsOn": ["Build"],
+			"group": {
+				"kind": "build"
+			}
+		},
+		{
+			"label": "Build & Run (Local) (PROVIDE YOUR OWN LAUNCH COMMAND)",
+			"command": "./run.sh",
+			"type": "shell",
+			"dependsOn": ["Build"],
+			"group": {
+				"kind": "build"
+			}
+		}
+	]
+}

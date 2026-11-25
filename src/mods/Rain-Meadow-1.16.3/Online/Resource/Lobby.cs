@@ -1,0 +1,442 @@
+﻿using RainMeadow.Generics;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace RainMeadow
+{
+    // Lobby is tightly bound to a SteamMatchmaking Lobby, also the top-level resource
+    public class Lobby : OnlineResource
+    {
+        public OnlineGameMode gameMode;
+        public OnlineGameMode.OnlineGameModeType gameModeType;
+        public OverworldSession overworld;
+        public Dictionary<OnlinePlayer, ClientSettings> clientSettings = new();
+        public List<KeyValuePair<OnlinePlayer, OnlineEntity.EntityId>> playerAvatars = new(); // guess we can support multiple avatars per client
+
+        public string[] requiredmods = [];
+        public string[] bannedmods = [];
+        public string[] whitelistmods = [];
+        public DynamicOrderedPlayerIDs bannedUsers = new();
+
+        public bool modsChecked;
+        public bool enumsChecked = false;
+        public bool bannedUsersChecked = false;
+
+        public bool lobbyRequestable = false;
+        public override bool canBeRequested => lobbyRequestable;
+
+        public Dictionary<string, bool> configurableBools;
+        public Dictionary<string, float> configurableFloats;
+        public Dictionary<string, int> configurableInts;
+
+        public string? enteredPassword;
+        public string? password;
+        public string? meadowTimeline;
+        public bool hasPassword => !string.IsNullOrWhiteSpace(password);
+        public bool cheats = false;
+        public bool eventGags = false;
+
+        public int joiningAttempts = 0;
+        public int enumSyncAttempts = 0;
+        private const int MaxJoiningAttempts = 10;
+        private const string ERROR_WrongPassword = "Wrong password!";
+        private const string ERROR_TooManyAttemps = "Unable to connect to the lobby.";
+        private const string ERROR_EnumListError = "Unable to get enum list.";
+        private const string ERROR_Timeout = "Request Timeout!";
+        public RPCEvent? joiningEvent;
+
+        // used for LAN lobby listings
+        public string ActiveTimeline
+        {
+            get
+            {
+                if (gameModeType == OnlineGameMode.OnlineGameModeType.Meadow)
+                    return meadowTimeline ?? "";
+                if (gameMode is StoryGameMode storyGameMode)
+                    return clientSettings.Values.Any(cs => cs.inGame) ? storyGameMode.currentCampaign.value : "";
+                return field ?? "";
+            }
+            set;
+        }
+
+        public Lobby(OnlineGameMode.OnlineGameModeType mode, OnlinePlayer owner, string? password) : base(null)
+        {
+            OnlineManager.lobby = this; // needed for early entity processing
+            bannedUsers.list = new List<MeadowPlayerId>();
+
+            RainMeadowModInfoManager.RefreshDebugModInfo();
+
+            this.gameMode = OnlineGameMode.FromType(mode, this);
+            this.gameModeType = mode;
+            if (gameMode == null) throw new Exception($"Invalid game mode {mode}");
+
+            if (owner == null) throw new Exception("No lobby owner");
+            isNeeded = true;
+            NewOwner(owner);
+
+            configurableBools = new Dictionary<string, bool>();
+            configurableFloats = new Dictionary<string, float>();
+            configurableInts = new Dictionary<string, int>();
+
+            // Clear chat logs
+            ChatLogManager.ClearChatLog();
+            
+            // Reset Enum Mapping
+            MeadowExtEnumSync.ResetEnumEntriesMapping();
+
+            if (isOwner)
+            {
+                requiredmods = RainMeadowModManager.GetRequiredMods();
+                bannedmods = RainMeadowModManager.GetBannedMods();
+                whitelistmods = RainMeadowModManager.GetWhitelistedMods().ToArray();
+                this.password = password;
+                (configurableBools, configurableFloats, configurableInts) = OnlineGameMode.GetHostRemixSettings(this.gameMode);
+
+                if (whitelistmods.Length > 0)
+                {
+                    var hostOnly = ModManager.ActiveMods.Select(mod => mod.id).Except(requiredmods).Except(whitelistmods).ToList();
+                    if (hostOnly.Count > 0)
+                        RainMeadow.Debug($"Whitelist lobby: host-only mods, not required or allowed on clients: [ {string.Join(", ", hostOnly)} ]");
+                }
+            }
+            else
+            {
+                this.enteredPassword = password;
+                enumSyncAttempts = 0;
+                RequestCompressedEnums();
+            }
+        }
+
+        public void RequestCompressedEnums()
+        {
+            RainMeadow.Debug("Requesting lobby enum list");
+            enumSyncAttempts++;
+            joiningEvent = owner.InvokeRPC(MeadowExtEnumSync.RequestCompressedExtEnums).Then(ResolveEnumCompression);
+        }
+        public void ResolveEnumCompression(GenericResult requestResult)
+        {
+            RainMeadow.Debug(this);
+            joiningEvent = null;
+            if (requestResult is GenericResult.Fail) // I didn't send it to the right person somehow
+            {
+                RainMeadow.Error("Request stopped for " + this);
+                MatchmakingManager.currentInstance.JoinLobby(false, ERROR_EnumListError);
+            }
+            else if (requestResult is GenericResult.Error) // Something went wrong, I should retry
+            {
+                RainMeadow.Error("request failed for " + this);
+                if ((requestResult.referencedEvent as RPCEvent)!.aborted) // Timeout
+                {
+                    RainMeadow.Error("Request timeouted for " + this);
+                    MatchmakingManager.currentInstance.JoinLobby(false, ERROR_Timeout);
+                }
+                else if (enumSyncAttempts >= MaxJoiningAttempts) // Too many attemps
+                {
+                    RainMeadow.Error($"joining request of {this} cancelled after {enumSyncAttempts} attempts");
+                    MatchmakingManager.currentInstance.JoinLobby(false, ERROR_TooManyAttemps);
+                }
+                else
+                {
+                    RequestCompressedEnums();
+                }
+            }
+        }
+
+        public void OnEnumSyncSuccessful()
+        {
+            enumsChecked = true;
+            RainMeadow.Debug("Requesting lobby");
+            joiningAttempts = 0;
+            joiningEvent = null;
+            RequestLobby(this.enteredPassword);
+        }
+
+        public void RequestLobby(string? key)
+        {
+            RainMeadow.Debug(this);
+            if (isPending) throw new InvalidOperationException("pending");
+            if (isAvailable) throw new InvalidOperationException("available");
+            ClearIncommingBuffers();
+            isRequesting = true;
+            joiningAttempts++;
+            joiningEvent = supervisor.InvokeRPC(RequestedLobby, key!).Then(ResolveLobbyRequest);
+        }
+
+        [RPCMethod(security = RPCSecurity.NoSecurity)]
+        public void RequestedLobby(RPCEvent request, string? key)
+        {
+            if (bannedUsers.list.Contains(request.from.id))
+            {
+                request.from.QueueEvent(new GenericResult.Fail(request));
+                return;
+            }
+            if (this.hasPassword)
+            {
+                if (this.password != key)
+                {
+                    request.from.QueueEvent(new GenericResult.Fail(request));
+                    return;
+                }
+            }
+            try
+            {
+                lobbyRequestable = true;
+                Requested(request);
+            }
+            finally
+            {
+                lobbyRequestable = false;
+            }
+        }
+
+        public void ResolveLobbyRequest(GenericResult requestResult)
+        {
+            RainMeadow.Debug(this);
+            isRequesting = false;
+            joiningEvent = null;
+            if (requestResult is GenericResult.Ok)
+            {
+                MatchmakingManager.currentInstance.JoinLobby(true);
+                if (string.IsNullOrEmpty(password)) password = enteredPassword; // Keep the password we've entered on hand in case lobby gets transfered to us.
+                if (!isAvailable) // this was transfered to me because the previous owner left
+                {
+                    WaitingForState();
+                    if (isOwner)
+                    {
+                        Available();
+                    }
+                }
+            }
+            else if (requestResult is GenericResult.Fail) // I didn't have the right key for this resource
+            {
+                RainMeadow.Error("locked request for " + this);
+                MatchmakingManager.lastJoinFailWasWrongPassword = true;
+                MatchmakingManager.currentInstance.JoinLobby(false, ERROR_WrongPassword);
+            }
+            else if (requestResult is GenericResult.Error) // I should retry
+            {
+                RainMeadow.Error("request failed for " + this);
+                if ((requestResult.referencedEvent as RPCEvent)!.aborted) // Timeout
+                {
+                    RainMeadow.Error("Request timeouted for " + this);
+                    MatchmakingManager.currentInstance.JoinLobby(false, ERROR_Timeout);
+                }
+                else if (joiningAttempts >= MaxJoiningAttempts) // Too many attemps
+                {
+                    RainMeadow.Error($"joining request of {this} cancelled after {joiningAttempts} attempts");
+                    MatchmakingManager.currentInstance.JoinLobby(false, ERROR_TooManyAttemps);
+                }
+                else
+                {
+                    RequestLobby((requestResult.referencedEvent as RPCEvent)!.args[0] as string);
+                }
+            }
+        }
+
+        public override void Tick(uint tick)
+        {
+            clientSettings = activeEntities.Where(e => e is ClientSettings).ToDictionary(e => e.owner, e => e as ClientSettings);
+            playerAvatars = clientSettings.SelectMany(e => e.Value.avatars.Select(a => new KeyValuePair<OnlinePlayer, OnlineEntity.EntityId>(e.Key, a))).ToList();
+            gameMode.LobbyTick(tick);
+            base.Tick(tick);
+        }
+
+        protected override void ActivateImpl()
+        {
+            overworld = new OverworldSession(this);
+            subresources.Add(overworld);
+        }
+
+        protected override void AvailableImpl()
+        {
+
+        }
+
+        protected override void DeactivateImpl()
+        {
+            throw new InvalidOperationException("cant deactivate");
+        }
+
+        protected override void UnavailableImpl()
+        {
+
+        }
+
+        protected override ResourceState MakeState(uint ts)
+        {
+            return new LobbyState(this, ts);
+        }
+
+        public override string Id()
+        {
+            return ".";
+        }
+
+        public override ushort ShortId()
+        {
+            throw new NotImplementedException(); // Lobby cannot be a subresource
+        }
+
+        public override OnlineResource SubresourceFromShortId(ushort shortId)
+        {
+            return this.subresources[shortId];
+        }
+
+        protected ushort nextId = 1;
+
+        public class LobbyState : ResourceWithSubresourcesState
+        {
+            [OnlineField]
+            public string timeline; 
+
+            [OnlineField]
+            public ushort nextId;
+            [OnlineField]
+            public string[] requiredmods;
+            [OnlineField]
+            public string[] bannedmods;
+            [OnlineField]
+            public string[] whitelistmods;
+            [OnlineField(nullable = true)]
+            public Generics.DynamicOrderedPlayerIDs bannedUsers;
+            [OnlineField(nullable = true)]
+            public Generics.DynamicOrderedPlayerIDs players;
+            [OnlineField(nullable = true)]
+            public Generics.DynamicOrderedUshorts inLobbyIds;
+            [OnlineField]
+            public Dictionary<string, bool> onlineBoolRemixSettings;
+            [OnlineField]
+            public Dictionary<string, float> onlineFloatRemixSettings;
+            [OnlineField]
+            public Dictionary<string, int> onlineIntRemixSettings;
+            [OnlineField]
+            public bool eventGags;
+            [OnlineField]
+            public bool cheats;
+            public LobbyState() : base() { }
+            public LobbyState(Lobby lobby, uint ts) : base(lobby, ts)
+            {
+                nextId = lobby.nextId;
+                players = new(lobby.participants.Select(p => p.id).ToList());
+                inLobbyIds = new(lobby.participants.Select(p => p.inLobbyId).ToList());
+                requiredmods = lobby.requiredmods;
+                bannedmods = lobby.bannedmods;
+                whitelistmods = lobby.whitelistmods;
+                bannedUsers = lobby.bannedUsers;
+                onlineBoolRemixSettings = lobby.configurableBools;
+                onlineFloatRemixSettings = lobby.configurableFloats;
+                onlineIntRemixSettings = lobby.configurableInts;
+                timeline = lobby.meadowTimeline;
+                eventGags = lobby.eventGags;
+                cheats = lobby.cheats;
+            }
+
+            public override void ReadTo(OnlineResource resource)
+            {
+                var lobby = (Lobby)resource;
+                lobby.nextId = nextId;
+                lobby.meadowTimeline = timeline;
+
+                for (int i = 0; i < players.list.Count; i++)
+                {
+
+                    if (MatchmakingManager.currentInstance.GetPlayer(players.list[i]) is OnlinePlayer p)
+                    {
+                        if (p.inLobbyId != inLobbyIds.list[i]) RainMeadow.Debug($"Setting player {p} to lobbyId {inLobbyIds.list[i]}");
+                        p.inLobbyId = inLobbyIds.list[i];
+                    }
+                    else
+                    {
+                        RainMeadow.Error("Player not found! " + players.list[i]);
+                    }
+
+
+                }
+                lobby.UpdateParticipants(players.list.Select(MatchmakingManager.currentInstance.GetPlayer).Where(p => p is not null).ToList());
+                if (!lobby.isOwner)
+                {
+                    lobby.bannedUsers = bannedUsers != null ? new(bannedUsers.list.ToList()) : new();
+                }
+                if (lobby.bannedUsersChecked == false)
+                {
+                    // Need to get the participants before we check
+                    if (this.bannedUsers != null && this.bannedUsers.list.Contains(OnlineManager.mePlayer.id))
+                    {
+
+                        BanHammer.BanUser(OnlineManager.mePlayer);
+                        if (lobby.participants.Contains(OnlineManager.mePlayer))
+                        {
+                            lobby.OnPlayerDisconnect(lobby.PlayerFromMeadowID(OnlineManager.mePlayer.id));
+                        }
+                        lobby.bannedUsersChecked = true;
+                        return;
+
+                    }
+
+                    lobby.bannedUsersChecked = true;
+                }
+
+                if (!lobby.modsChecked)
+                {
+                    string rejoinCode = MatchmakingManager.currentInstance.GetCurrentLobbyJoinCode(lobby.password ?? lobby.enteredPassword);
+
+                    RainMeadowModManager.CheckMods(requiredmods, bannedmods, null, true, rejoinCode, whitelistmods);
+
+                    lobby.requiredmods = requiredmods;
+                    lobby.bannedmods = bannedmods;
+                    lobby.whitelistmods = whitelistmods;
+                    if (ModManager.MMF && lobby.gameMode.nonGameplayRemixSettings != null)
+                    {
+                        OnlineGameMode.SetClientRemixSettings(onlineBoolRemixSettings, onlineFloatRemixSettings, onlineIntRemixSettings);
+                    }
+
+                    lobby.configurableBools = onlineBoolRemixSettings.ToDictionary();
+                    lobby.configurableFloats = onlineFloatRemixSettings.ToDictionary();
+                    lobby.configurableInts = onlineIntRemixSettings.ToDictionary();
+
+                    lobby.modsChecked = true;
+                }
+                
+                lobby.eventGags = eventGags;
+                lobby.cheats = cheats;
+                base.ReadTo(resource);
+            }
+        }
+
+        public override string ToString()
+        {
+            return "Lobby";
+        }
+
+        public OnlinePlayer PlayerFromId(ushort id)
+        {
+            if (id == 0) return null;
+            return OnlineManager.players.FirstOrDefault(p => p.inLobbyId == id);
+        }
+
+        public OnlinePlayer PlayerFromMeadowID(MeadowPlayerId id)
+        {
+            return OnlineManager.players.FirstOrDefault(p => p.id == id);
+        }
+
+        protected override void NewParticipantImpl(OnlinePlayer player)
+        {
+            if (isOwner)
+            {
+                player.inLobbyId = nextId;
+                RainMeadow.Debug($"Assigned inLobbyId of {nextId} to player {player}");
+                nextId++;
+                // todo overflows and repeats (unrealistic but it's a ushort)
+            }
+            base.NewParticipantImpl(player);
+            gameMode.NewPlayerInLobby(player);
+        }
+
+        protected override void ParticipantLeftImpl(OnlinePlayer player)
+        {
+            base.ParticipantLeftImpl(player);
+            gameMode.PlayerLeftLobby(player);
+        }
+    }
+}

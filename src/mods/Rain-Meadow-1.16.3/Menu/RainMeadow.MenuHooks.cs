@@ -1,0 +1,946 @@
+using HarmonyLib;
+using Menu;
+using Menu.Remix;
+using Menu.Remix.MixedUI;
+using Mono.Cecil.Cil;
+using MonoMod.Cil;
+using MonoMod.RuntimeDetour;
+using RainMeadow.UI;
+using RainMeadow.UI.Components;
+using RainMeadow.UI.Components.Patched;
+using RainMeadow.UI.Interfaces;
+using RainMeadow.UI.Menus;
+using RainMeadow.UI.Systems;
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
+using UnityEngine;
+
+namespace RainMeadow
+{
+    public partial class RainMeadow
+    {
+        private void EssentialMenuHooks()
+        {
+            IL.Menu.MainMenu.AddMainMenuButton += IL_MainMenu_AddMainMenuButton;
+            On.Menu.MainMenu.ctor += MainMenu_ctor;
+        }
+
+        private void MenuHooks()
+        {
+            IntroRollReplacement.OnEnable();
+            IL.Menu.Menu.Update += IL_Menu_Update;
+            On.Menu.Menu.SelectNewObject += On_Menu_SelectNewObject;
+
+            //On.Menu.InputOptionsMenu.ctor += InputOptionsMenu_ctor;
+
+            On.ProcessManager.RequestMainProcessSwitch_ProcessID += ProcessManager_RequestMainProcessSwitch_ProcessID;
+            On.ProcessManager.PostSwitchMainProcess += ProcessManager_PostSwitchMainProcess;
+
+            IL.Menu.SlugcatSelectMenu.SlugcatPage.AddImage += SlugcatPage_AddImage;
+
+            On.Menu.MenuScene.BuildScene += MenuScene_BuildScene;
+            On.Menu.MenuScene.SaveToFile += On_MenuScene_SaveToFile;
+
+            On.Menu.SlugcatSelectMenu.SlugcatUnlocked += SlugcatSelectMenu_SlugcatUnlocked;
+            On.Menu.SlugcatSelectMenu.StartGame += SlugcatSelectMenu_StartGame;
+            On.Menu.SlugcatSelectMenu.UpdateStartButtonText += SlugcatSelectMenu_UpdateStartButtonText;
+
+            On.Menu.SlugcatSelectMenu.AddColorButtons += SlugcatSelectMenu_AddColorButtons;
+            On.Menu.MenuObject.ctor += On_MenuObject_Ctor;
+            On.Menu.MenuObject.Update += On_MenuObject_Update;
+            On.Menu.MenuObject.GrafUpdate += On_MenuObject_GrafUpdate;
+
+            HookSelectableMenuObject<ButtonTemplate>();
+            HookSelectableMenuObject<UIelementWrapper>();
+            new Hook(typeof(UIelement).GetProperty("MousePos", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetMethod, UiElement_MousePos);
+            new Hook(typeof(UIelement).GetProperty("IsInactive", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public).GetMethod, UiElement_IsInactive);
+
+            new Hook(typeof(MenuObject).GetProperty("Container", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public).GetMethod, MenuObject_Container);
+            new Hook(typeof(PositionedMenuObject).GetProperty("ScreenPos", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public).GetMethod, PositionedMenuObject_GetScreenPos);
+            new Hook(typeof(PositionedMenuObject).GetProperty("ScreenLastPos", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public).GetMethod, PositionedMenuObject_GetScreenPos);
+            On.Menu.SlugcatSelectMenu.GetSaveGameData += SlugcatSelectMenu_GetSaveGameData;
+            new Hook(typeof(SlugcatSelectMenu.SlugcatPageContinue).GetProperty(nameof(SlugcatSelectMenu.SlugcatPageContinue.HasMark)).GetGetMethod(), SlugcatPageContinue_SaveDataFlag);
+            new Hook(typeof(SlugcatSelectMenu.SlugcatPageContinue).GetProperty(nameof(SlugcatSelectMenu.SlugcatPageContinue.HasGlow)).GetGetMethod(), SlugcatPageContinue_SaveDataFlag);
+            new Hook(typeof(SlugcatSelectMenu.SlugcatPageContinue).GetProperty(nameof(SlugcatSelectMenu.SlugcatPageContinue.CurrentFood)).GetGetMethod(), SlugcatPageContinue_SaveDataInt);
+
+            On.MoreSlugcats.BackgroundOptionsMenu.OptionToIndex += BackgroundOptionsMenu_OptionToIndex;
+            On.MoreSlugcats.BackgroundOptionsMenu.IndexToOption += BackgroundOptionsMenu_IndexToOption;
+            On.MoreSlugcats.BackgroundOptionsMenu.IndexUnlocked += BackgroundOptionsMenu_IndexUnlocked;
+            On.MoreSlugcats.BackgroundOptionsMenu.PopulateButtons += BackgroundOptionsMenu_PopulateButtons;
+
+            new Hook(typeof(MoreSlugcats.BackgroundOptionsMenu).GetProperty(nameof(MoreSlugcats.BackgroundOptionsMenu.NonRegionButtons)).GetGetMethod(), BackgroundOptionsMenu_NonRegionButtons);
+
+            _ = Ext_HUD_OwnerType.RainMeadowOverlay;
+            On.ProcessManager.Update += ProcessManager_Update_UpdateOverlay;
+            IL.ProcessManager.InitFadeSprite += ProcessManager_InitFadeSprite_SwitchTextSide;
+            IL.Menu.SlugcatSelectMenu.ctor += SlugcatSelectMenu_ctor;
+
+            if (rainMeadowOptions.CurrentLogLevel.Value <= LogLevel.Debug)
+            {
+                IL.Menu.MenuObject.Update += MenuObject_Update_AbnormallyLongUpdate;
+                IL.Menu.MenuObject.GrafUpdate += MenuObject_GrafUpdate_AbnormallyLongUpdate;
+            }
+        }
+
+        private const int UpdateAbnormalThreshold = 70;
+        private const int GrafUpdateAbnormalThreshold = 35;
+        private void MenuObject_Update_AbnormallyLongUpdate(ILContext il)
+            => MenuObject_AbnormallyLongUpdate(il, false);
+        private void MenuObject_GrafUpdate_AbnormallyLongUpdate(ILContext il)
+            => MenuObject_AbnormallyLongUpdate(il, true);
+        private void MenuObject_AbnormallyLongUpdate(ILContext il, bool isGraf)
+        {
+            try
+            {
+                ILCursor cursor = new(il);
+                MethodBody body = il.Body;
+
+                VariableDefinition stopWatch = new(
+                    il.Module.ImportReference(typeof(Stopwatch))
+                );
+                body.Variables.Add(stopWatch);
+                body.InitLocals = true;
+
+                cursor.EmitDelegate(Stopwatch.StartNew);
+                cursor.Emit(OpCodes.Stloc, stopWatch);
+
+                if (isGraf)
+                    cursor.GotoNext(MoveType.After, x => x.MatchCallvirt<MenuObject>(nameof(MenuObject.GrafUpdate)));
+                else
+                    cursor.GotoNext(MoveType.After, x => x.MatchCallvirt<MenuObject>(nameof(MenuObject.Update)));
+
+                cursor.Emit(OpCodes.Ldloc, stopWatch);
+                cursor.Emit(OpCodes.Ldarg_0);
+                cursor.Emit(OpCodes.Ldloc_0);
+                cursor.EmitDelegate((Stopwatch sw, MenuObject self, int subIndex) =>
+                {
+                    if (sw.ElapsedMilliseconds > (isGraf ? GrafUpdateAbnormalThreshold : UpdateAbnormalThreshold))
+                        Warn($"{(isGraf ? "GrafUpdate" : "Update")} of {self.subObjects[subIndex].GetType().Name} took {sw.ElapsedMilliseconds}ms !! (owner : {self.GetType().Name})");
+
+                    if (subIndex == self.subObjects.Count - 1)
+                        sw.Stop();
+                    else
+                        sw.Restart();
+                });
+            }
+            catch (Exception e)
+            {
+                Error($"Error while IL hooking : {e}");
+            }
+        }
+
+        private void SlugcatSelectMenu_ctor(ILContext il)
+        {
+            try
+            {
+                // this.saveGameData[this.slugcatColorOrder[i]] = global::Menu.SlugcatSelectMenu.MineForSaveData(manager, this.slugcatColorOrder[i]);
+                ILCursor c = new ILCursor(il);
+
+                ILLabel skip = c.DefineLabel();
+
+                c.GotoNext(MoveType.After,
+                    x => x.MatchLdcI4(0),
+                    x => x.MatchStloc(5),
+                    x => x.MatchBr(out _),
+                    x => x.MatchLdarg(0)
+                    );
+
+                c.Emit(OpCodes.Ldloc, 5);
+                c.EmitDelegate((Menu.SlugcatSelectMenu self, int index) =>
+                {
+                    if (isStoryMode(out var story) && !OnlineManager.lobby.isOwner)
+                    {
+                        var pageIndex = self.indexFromColor(story.currentCampaign);
+                        if (index == pageIndex)
+                        {
+                            self.saveGameData[self.slugcatColorOrder[index]] = story.menuSaveGameData;
+                            self.slugcatPageIndex = index;
+                        }
+                        else
+                        {
+                            self.saveGameData[self.slugcatColorOrder[index]] = null;
+                        }
+                        return true;
+                    }
+                    return false;
+                });
+                c.Emit(OpCodes.Brtrue, skip);
+
+                c.Emit(OpCodes.Ldarg_0);
+
+                c.GotoNext(MoveType.After,
+                    x => x.MatchCallvirt(typeof(Dictionary<SlugcatStats.Name, SlugcatSelectMenu.SaveGameData>).GetMethod("set_Item"))
+                    );
+
+                c.MarkLabel(skip);
+            }
+            catch (Exception e)
+            {
+                Error($"Error while IL hooking : {e}");
+            }
+        }
+        private bool UiElement_IsInactive(Func<UIelement, bool> orig, UIelement self)
+        {
+            if (self.wrapper is PatchedUIelementWrapper wrapper && wrapper.IsHidden)
+                return true;
+            return orig(self);
+        }
+        private Vector2 UiElement_MousePos(Func<UIelement, Vector2> orig, UIelement element)
+        {
+            var origMousePos = orig(element);
+            if (element.wrapper is UIelementWrapper wrapper && wrapper.TryGetScrollObject() is MenuScrollObject obj)
+            {
+                if (obj.ContainedAlpha < 1 || !obj.IsMouseWithinBounds)
+                {
+                    return new Vector2(-600000, -600000);
+                }
+            }
+            return origMousePos;
+        }
+        private void HookSelectableMenuObject<T>() where T : MenuObject, SelectableMenuObject
+        {
+            new Hook(typeof(T).GetProperty("CurrentlySelectableMouse", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public).GetMethod, On_SelectableMenuObj_MouseSelectable<T>);
+            new Hook(typeof(T).GetProperty("CurrentlySelectableNonMouse", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public).GetMethod, On_SelectableMenuObj_NonMouseSelectable<T>);
+        }
+        private void ProcessManager_InitFadeSprite_SwitchTextSide(ILContext il)
+        {
+            try
+            {
+                var cursor = new ILCursor(il);
+                cursor.GotoNext(MoveType.After, x => x.MatchLdcR4(100.2f));
+                cursor.Emit(OpCodes.Ldarg_0);
+                cursor.EmitDelegate(
+                    (float orig, ProcessManager self) =>
+                    {
+                        // Put it on the right, so chat can don't overlap with it
+                        if (RMOverlayHUDMenu.GetOverlay()?.chatHud is not null)
+                        {
+                            // RainMeadow.Debug($"orig was <{orig}>, now <{self.rainWorld.options.ScreenSize.x - orig - Mathf.Abs(self.loadingLabel.textRect.x)}> (<{self.rainWorld.options.ScreenSize.x}><{self.loadingLabel.textRect.x}>)");
+                            return self.rainWorld.options.ScreenSize.x - orig - Mathf.Abs(self.loadingLabel.textRect.x); // textRech can be negative ????
+                        }
+                        return orig;
+                    }
+                );
+            }
+            catch (Exception e)
+            {
+                Error("Error while hooking : " + e);
+            }
+        }
+
+        private void ProcessManager_Update_UpdateOverlay(On.ProcessManager.orig_Update orig, ProcessManager self, float deltaTime)
+        {
+            orig(self, deltaTime);
+            if (RMOverlayHUDMenu.TryGetOverlayMenu(out var overlayHUDsManager))
+            {
+                overlayHUDsManager.RawUpdate(deltaTime);
+            }
+            else
+            {
+                new RMOverlayHUDMenu(self).AddOverlayHUD();
+                Debug("Rain Meadow Overlay HUD had been added");
+            }
+        }
+
+        public void BackgroundOptionsMenu_PopulateButtons(On.MoreSlugcats.BackgroundOptionsMenu.orig_PopulateButtons orig, MoreSlugcats.BackgroundOptionsMenu self)
+        {
+            orig(self);
+            int offset = self.ButtonsPerPage * self.pageNum, maxOffset = offset + self.ButtonsOnPage(self.pageNum);
+            if (meadowAnniversaryBackgroundOption >= offset && meadowAnniversaryBackgroundOption < maxOffset)
+            {
+                var anniv = new MenuIllustration(self, self.pages[0], string.Empty, "anniv_small", self.backgroundIllustrations[meadowAnniversaryBackgroundOption - offset].pos, crispPixels: true, anchorCenter: false);
+                self.backgroundIllustrations = [.. self.backgroundIllustrations.AddItem(anniv)];
+                self.pages[0].subObjects.Add(anniv);
+            }
+            if (meadowSeeBgOption >= offset && meadowSeeBgOption < maxOffset)
+            {
+                var medsee = new MenuIllustration(self, self.pages[0], string.Empty, "meadowsee_small", self.backgroundIllustrations[meadowSeeBgOption - offset].pos, crispPixels: true, anchorCenter: false);
+                self.backgroundIllustrations = [.. self.backgroundIllustrations.AddItem(medsee)];
+                self.pages[0].subObjects.Add(medsee);
+            }
+
+            if (meadowCoinBg >= offset && meadowCoinBg < maxOffset)
+            {
+                var medCoin = new MenuIllustration(self, self.pages[0], string.Empty, "coin_small", self.backgroundIllustrations[meadowCoinBg - offset].pos, crispPixels: true, anchorCenter: false);
+                self.backgroundIllustrations = [.. self.backgroundIllustrations.AddItem(medCoin)];
+                self.pages[0].subObjects.Add(medCoin);
+            }
+        }
+
+        public int BackgroundOptionsMenu_NonRegionButtons(Func<MoreSlugcats.BackgroundOptionsMenu, int> orig, MoreSlugcats.BackgroundOptionsMenu self)
+        {
+            int buttons = orig(self);
+            meadowAnniversaryBackgroundOption = buttons;
+            meadowSeeBgOption = buttons + 1;
+            meadowCoinBg = buttons + 2;
+            return buttons + 3;
+        }
+
+        public static int meadowAnniversaryBackgroundOption = -1, meadowSeeBgOption = -1, meadowCoinBg = -1;
+        int BackgroundOptionsMenu_OptionToIndex(On.MoreSlugcats.BackgroundOptionsMenu.orig_OptionToIndex orig, MoreSlugcats.BackgroundOptionsMenu self, MenuScene.SceneID option)
+        {
+            if (option == Ext_SceneID.Meadow_Anniversary)
+            {
+                return meadowAnniversaryBackgroundOption;
+            }
+            if (option == Ext_SceneID.Meadow_See)
+            {
+                return meadowSeeBgOption;
+            }
+            if (option == Ext_SceneID.Meadow_Coin)
+            {
+                return meadowCoinBg;
+            }
+            return orig(self, option);
+        }
+
+        MenuScene.SceneID BackgroundOptionsMenu_IndexToOption(On.MoreSlugcats.BackgroundOptionsMenu.orig_IndexToOption orig, MoreSlugcats.BackgroundOptionsMenu self, int ind)
+        {
+            if (ind == meadowAnniversaryBackgroundOption)
+            {
+                return Ext_SceneID.Meadow_Anniversary;
+            }
+            if (ind == meadowSeeBgOption)
+            {
+                return Ext_SceneID.Meadow_See;
+            }
+            if (ind == meadowCoinBg)
+            {
+                return Ext_SceneID.Meadow_Coin;
+            }
+            return orig(self, ind);
+        }
+
+        bool BackgroundOptionsMenu_IndexUnlocked(On.MoreSlugcats.BackgroundOptionsMenu.orig_IndexUnlocked orig, MoreSlugcats.BackgroundOptionsMenu self, int ind, List<string> regions)
+        {
+            if (ind == meadowAnniversaryBackgroundOption || ind == meadowSeeBgOption || ind == meadowCoinBg)
+            {
+                return true;
+            }
+
+            return orig(self, ind, regions);
+        }
+
+        void IL_Menu_Update(ILContext il)
+        {
+            try
+            {
+                ILCursor cursor = new(il);
+                cursor.TryGotoNext(MoveType.After, x => x.MatchStfld<Menu.Menu>(nameof(Menu.Menu.allowSelectMove)));
+                cursor.Emit(OpCodes.Ldarg_0);
+                cursor.EmitDelegate((Menu.Menu self) =>
+                {
+                    self.allowSelectMove = self.allowSelectMove && !(self is SpectatorOverlay { forceNonMouseSelectFreeze: true });
+                });
+            }
+            catch (Exception ex)
+            {
+                Error(ex);
+            }
+        }
+        void On_Menu_SelectNewObject(On.Menu.Menu.orig_SelectNewObject orig, Menu.Menu self, RWCustom.IntVector2 direction)
+        {
+            if (OnlineManager.lobby != null && OnlineManager.lobby.gameMode is not MeadowGameMode)
+            {
+                // possibly might wanna make a remix option for disabling text navigation in story menu and enabling menu navigation?
+                if (!ChatTextBox.blockInput || self.input.controllerType != Options.ControlSetup.Preset.KeyboardSinglePlayer) orig(self, direction);
+            }
+            else
+            {
+                orig(self, direction);
+            }
+        }
+        void On_MenuObject_Ctor(On.Menu.MenuObject.orig_ctor orig, MenuObject self, Menu.Menu menu, MenuObject owner)
+        {
+            orig(self, menu, owner);
+            self.TryGetOrAddScrollObject();
+        }
+        void On_MenuObject_Update(On.Menu.MenuObject.orig_Update orig, MenuObject self)
+        {
+            orig(self);
+            if (self.TryGetScrollObject() is MenuScrollObject obj)
+                obj.UpdateInObject();
+
+        }
+        void On_MenuObject_GrafUpdate(On.Menu.MenuObject.orig_GrafUpdate orig, MenuObject self, float timestacker)
+        {
+            orig(self, timestacker);
+            if (self.TryGetScrollObject() is MenuScrollObject obj)
+                obj.GrafUpdateInObject(timestacker);
+        }
+        bool On_SelectableMenuObj_MouseSelectable<T>(Func<T, bool> orig, T self) where T : MenuObject, SelectableMenuObject
+        {
+            bool origSelect = orig(self);
+            if (self.TryGetScrollObject() is MenuScrollObject obj)
+            {
+                if (obj.ContainedAlpha < 1 || !obj.IsMouseWithinBounds)
+                    origSelect = false;
+            }
+            return origSelect;
+        }
+        bool On_SelectableMenuObj_NonMouseSelectable<T>(Func<T, bool> orig, T self) where T : MenuObject, SelectableMenuObject
+        {
+            bool origSelect = orig(self);
+            if (self.TryGetScrollObject() is MenuScrollObject obj)
+            {
+                if (obj.ContainedAlpha < 1 || !obj.IsWithinBounds)
+                    origSelect = false;
+            }
+            return origSelect;
+        }
+        private FContainer MenuObject_Container(Func<MenuObject, FContainer> orig, MenuObject self)
+        {
+            if (self.menu is StoryOnlineMenu stryMenu && self is SlugcatSelectMenu.SlugcatPage)
+            {
+                if (stryMenu.slugPageContainer == null) //property gets called before StoryOnlineMenu ctor, make new instance here
+                    (self.owner?.Container ?? stryMenu.container).AddChild(stryMenu.slugPageContainer = new());
+                return stryMenu.slugPageContainer; //now all slugcat pages will be in a stored in this container instead of menu.container, so refreshpages will add slugcat sprites here
+            }
+            return orig(self);
+        }
+        private Vector2 PositionedMenuObject_GetScreenPos(Func<PositionedMenuObject,Vector2> orig, PositionedMenuObject self)
+        {
+            var origScreenPos = orig(self);
+            if (self.owner is ScrollableContainer.Scrollable scrollable)
+                origScreenPos = scrollable.GetNewScreenPos(self, origScreenPos);
+            return origScreenPos;
+        }
+        void SlugcatSelectMenu_AddColorButtons(On.Menu.SlugcatSelectMenu.orig_AddColorButtons orig, SlugcatSelectMenu self)
+        {
+            if (self is StoryOnlineMenu sOM)
+            {
+                if (sOM.jollyToggleConfigMenu is not null) return; // jolly has it's own coloring system.
+                if (sOM.colorInterface == null)
+                {
+                    sOM.SetupSelectableSlugcats();
+                    Vector2 pos = new(1000f - (1366f - sOM.manager.rainWorld.options.ScreenSize.x) / 2f, sOM.manager.rainWorld.options.ScreenSize.y - 100f);
+                    self.colorInterface = self.GetColorInterfaceForSlugcat(sOM.PlayerSelectedSlugcat, pos);
+                    self.pages[0].subObjects.Add(self.colorInterface);
+                    //return; removed return due to the orig making a new the color interface if it is null, so unnecessary
+                }
+            }
+            orig(self);
+        }
+
+        private bool SlugcatSelectMenu_SlugcatUnlocked(On.Menu.SlugcatSelectMenu.orig_SlugcatUnlocked orig, SlugcatSelectMenu self, SlugcatStats.Name i)
+        {
+            if (OnlineManager.lobby == null)
+            {
+                return orig(self, i);
+            }
+
+            //TODO MSC: do something smarter, this stops the crash; I'm being lazy -Turtle
+            return true;
+        }
+
+        private void SlugcatSelectMenu_StartGame(On.Menu.SlugcatSelectMenu.orig_StartGame orig, SlugcatSelectMenu self, SlugcatStats.Name storyGameCharacter)
+        {
+            if (self is StoryOnlineMenu menu)
+            {
+                menu.StartGame(storyGameCharacter);
+            }
+            else
+            {
+                orig(self, storyGameCharacter);
+            }
+        }
+
+        private void SlugcatSelectMenu_UpdateStartButtonText(On.Menu.SlugcatSelectMenu.orig_UpdateStartButtonText orig, SlugcatSelectMenu self)
+        {
+            if (self is StoryOnlineMenu menu && OnlineManager.lobby != null && !OnlineManager.lobby.isOwner)
+            {
+                self.startButton.fillTime = 40f;
+                self.startButton.menuLabel.text = self.Translate("ENTER");
+            }
+            else
+            {
+                orig(self);
+            }
+        }
+        private void On_MenuScene_SaveToFile(On.Menu.MenuScene.orig_SaveToFile orig, MenuScene self)
+        {
+            if (self.menu is ArenaOnlineLobbyMenu && self.flatMode)
+            {
+                Debug("Prevented overriding positions.txt");
+                return;
+            }
+            orig(self);
+        }
+        private void MenuScene_BuildScene(On.Menu.MenuScene.orig_BuildScene orig, MenuScene self)
+        {
+            orig(self);
+            if (!string.IsNullOrEmpty(self.sceneFolder))
+            {
+                return;
+            }
+
+            if (self.sceneID == RainMeadow.Ext_SceneID.Meadow_Anniversary)
+            {
+                self.sceneFolder = "Scenes" + Path.DirectorySeparatorChar.ToString() + "meadow - anniversary";
+                self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "1 anni bg", new Vector2(0f, 0f), 4.0f, MenuDepthIllustration.MenuShader.Normal));
+                self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "2 anni sun", new Vector2(0f, 0f), 4.0f, MenuDepthIllustration.MenuShader.Normal));
+                self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "3 anni bg balloon", new Vector2(0f, 0f), 3.8f, MenuDepthIllustration.MenuShader.Normal));
+                self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "4 anni balloon", new Vector2(0f, 0f), 2.9f, MenuDepthIllustration.MenuShader.Normal));
+                self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "5 anni fg balloon", new Vector2(0f, 0f), 2.5f, MenuDepthIllustration.MenuShader.Normal));
+                self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "6 anni squidfriends", new Vector2(0f, 0f), 2.4f, MenuDepthIllustration.MenuShader.Normal));
+                self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "7 anni noot", new Vector2(0f, 0f), 2.3f, MenuDepthIllustration.MenuShader.Normal));
+                (self as InteractiveMenuScene).idleDepths.Add(3.5f);
+                (self as InteractiveMenuScene).idleDepths.Add(3.5f);
+                (self as InteractiveMenuScene).idleDepths.Add(2.2f);
+                (self as InteractiveMenuScene).idleDepths.Add(2.0f);
+                (self as InteractiveMenuScene).idleDepths.Add(1.5f);
+                (self as InteractiveMenuScene).idleDepths.Add(1.2f);
+                (self as InteractiveMenuScene).idleDepths.Add(1.0f);
+            }
+            if (self.sceneID == RainMeadow.Ext_SceneID.Meadow_See)
+            {
+                self.sceneFolder = "Scenes" + Path.DirectorySeparatorChar.ToString() + "meadow - meadowsee";
+                if (self.flatMode)
+                    self.AddIllustration(new MenuIllustration(self.menu, self, self.sceneFolder, "meadowsee_flat", new(683f, 384f), false, true));
+                else
+                {
+                    self.AddIllustration(new MenuIllustration(self.menu, self, self.sceneFolder, "meadowsee_sky", new Vector2(0, 0), false, false));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowsee_skybuilding", new Vector2(0, 0), 9f, MenuDepthIllustration.MenuShader.LightEdges));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowsee_skybuilding2", new Vector2(0, 0), 8f, MenuDepthIllustration.MenuShader.LightEdges));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowsee_waterfalls", new Vector2(0, 0), 7f, MenuDepthIllustration.MenuShader.LightEdges));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowsee_fog", new Vector2(0f, 0f), 6f, MenuDepthIllustration.MenuShader.LightEdges));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowsee_vines", new Vector2(0f, 0f), 4.4f, MenuDepthIllustration.MenuShader.LightEdges));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowsee_pipe", new Vector2(0f, 0f), 4f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowsee_floor", new Vector2(0f, 0f), 3f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowsee_slugcat", new Vector2(0f, 0f), 1f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowsee_vines2", new Vector2(0f, 0f), 0.8f, MenuDepthIllustration.MenuShader.Normal));
+                    (self as InteractiveMenuScene).idleDepths.Add(4.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(3.7f);
+                    (self as InteractiveMenuScene).idleDepths.Add(3.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.7f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.4f);
+                    (self as InteractiveMenuScene).idleDepths.Add(1.5f);
+                    (self as InteractiveMenuScene).idleDepths.Add(1.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(0.9f);
+                    (self as InteractiveMenuScene).idleDepths.Add(0.4f);
+                }
+            }
+
+            if (self.sceneID == RainMeadow.Ext_SceneID.Meadow_Coin)
+            {
+                self.sceneFolder = "Scenes" + Path.DirectorySeparatorChar.ToString() + "meadow - coin";
+                if (self.flatMode)
+                {
+                    self.AddIllustration(new MenuIllustration(self.menu, self, self.sceneFolder, "meadowcoin - flat",
+                        new(683f, 384f), false, true));
+                }
+                else
+                {
+                    self.blurMin = -5f;
+                    self.blurMax = 0.2f;
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowcoin - background",
+                        new(-60f, -25f), 10f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowcoin - coins top",
+                        new(-58.3f, -25f), 4f, MenuDepthIllustration.MenuShader.LightEdges));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowcoin - shadows",
+                        new(-61f, -59f), 4.5f, MenuDepthIllustration.MenuShader.Multiply));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowcoin - rotund specimen",
+                        new(-65f, -60f), 4.5f, MenuDepthIllustration.MenuShader.LightEdges));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowcoin - pole",
+                        new(-35f, -25f), 7.9f, MenuDepthIllustration.MenuShader.LightEdges));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowcoin - fabric shadows",
+                        new(-35f, -28.3f), 3.2f, MenuDepthIllustration.MenuShader.Multiply));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowcoin - fabric",
+                        new(-35f, -28.3f), 2.9f, MenuDepthIllustration.MenuShader.LightEdges));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "meadowcoin - light beams",
+                        new(-49f, -16f), 4.5f, MenuDepthIllustration.MenuShader.Lighten));
+                }
+            }
+            if (self.sceneID == RainMeadow.Ext_SceneID.Slugcat_MeadowSquidcicada)
+            {
+                self.sceneFolder = "Scenes" + Path.DirectorySeparatorChar.ToString() + "meadow - squidcicada";
+                if (self.flatMode)
+                {
+                    self.AddIllustration(new MenuIllustration(self.menu, self, self.sceneFolder, "MeadowSquidcicada - Flat", new Vector2(683f, 384f), false, true));
+                }
+                else
+                {
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmsquid bg", new Vector2(0f, 0f), 3.8f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmsquid mg", new Vector2(0f, 0f), 2.9f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmsquid squit", new Vector2(0f, 0f), 2.1f, MenuDepthIllustration.MenuShader.LightEdges));
+                    (self as InteractiveMenuScene).idleDepths.Add(3.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.1f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.0f);
+                    (self as InteractiveMenuScene).idleDepths.Add(1.5f);
+                }
+            }
+            else if (self.sceneID == RainMeadow.Ext_SceneID.Slugcat_MeadowLizard)
+            {
+                self.sceneFolder = "Scenes" + Path.DirectorySeparatorChar.ToString() + "meadow - lizard";
+                if (self.flatMode)
+                {
+                    self.AddIllustration(new MenuIllustration(self.menu, self, self.sceneFolder, "MeadowLizard - Flat", new Vector2(683f, 384f), false, true));
+                }
+                else
+                {
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmliz bg", new Vector2(0f, 0f), 3.5f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmliz liz2", new Vector2(0f, 0f), 2.4f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmliz liz1", new Vector2(0f, 0f), 2.2f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmliz fgplants", new Vector2(0f, 0f), 2.1f, MenuDepthIllustration.MenuShader.LightEdges));
+                    (self as InteractiveMenuScene).idleDepths.Add(3.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.1f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.0f);
+                    (self as InteractiveMenuScene).idleDepths.Add(1.5f);
+                }
+            }
+            else if (self.sceneID == RainMeadow.Ext_SceneID.Slugcat_MeadowScav)
+            {
+                self.sceneFolder = "Scenes" + Path.DirectorySeparatorChar.ToString() + "meadow - scav";
+                if (self.flatMode)
+                {
+                    self.AddIllustration(new MenuIllustration(self.menu, self, self.sceneFolder, "MeadowScav - Flat", new Vector2(683f, 384f), false, true));
+                }
+                else
+                {
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmscav bg", new Vector2(0f, 0f), 3.5f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmscav scav", new Vector2(0f, 0f), 2.2f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmscav fg", new Vector2(0f, 0f), 2.1f, MenuDepthIllustration.MenuShader.LightEdges));
+                    (self as InteractiveMenuScene).idleDepths.Add(3.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.1f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.0f);
+                    (self as InteractiveMenuScene).idleDepths.Add(1.5f);
+                }
+            }
+            else if (self.sceneID == RainMeadow.Ext_SceneID.Slugcat_MeadowEggbug)
+            {
+                self.sceneFolder = "Scenes" + Path.DirectorySeparatorChar.ToString() + "meadow - eggbug";
+                if (self.flatMode)
+                {
+                    self.AddIllustration(new MenuIllustration(self.menu, self, self.sceneFolder, "MeadowEggbug - Flat", new Vector2(683f, 384f), false, true));
+                }
+                else
+                {
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmbug bg", new Vector2(0f, 0f), 3.5f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmbug mg", new Vector2(0f, 0f), 2.4f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmbug bug", new Vector2(0f, 0f), 2.2f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmbug fg", new Vector2(0f, 0f), 2.1f, MenuDepthIllustration.MenuShader.LightEdges));
+                    (self as InteractiveMenuScene).idleDepths.Add(3.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.1f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.0f);
+                    (self as InteractiveMenuScene).idleDepths.Add(1.5f);
+                }
+            }
+            else if (self.sceneID == RainMeadow.Ext_SceneID.Slugcat_MeadowNoot)
+            {
+                self.sceneFolder = "Scenes" + Path.DirectorySeparatorChar.ToString() + "meadow - noot";
+                if (self.flatMode)
+                {
+                    self.AddIllustration(new MenuIllustration(self.menu, self, self.sceneFolder, "MeadowNoot - Flat", new Vector2(683f, 384f), false, true));
+                }
+                else
+                {
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmnoot bg", new Vector2(0f, 0f), 3.5f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmnoot mg", new Vector2(0f, 0f), 2.8f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmnoot noot", new Vector2(0f, 0f), 2.2f, MenuDepthIllustration.MenuShader.LightEdges));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmnoot fg", new Vector2(0f, 0f), 1.8f, MenuDepthIllustration.MenuShader.LightEdges));
+                    (self as InteractiveMenuScene).idleDepths.Add(3.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.6f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.5f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.4f);
+                    //(self as InteractiveMenuScene).idleDepths.Add(1.5f);
+                }
+            }
+            else if (self.sceneID == RainMeadow.Ext_SceneID.Slugcat_MeadowMouse)
+            {
+                self.sceneFolder = "Scenes" + Path.DirectorySeparatorChar.ToString() + "meadow - mouse";
+                if (self.flatMode)
+                {
+                    self.AddIllustration(new MenuIllustration(self.menu, self, self.sceneFolder, "MeadowMouse - Flat", new Vector2(683f, 384f), false, true));
+                }
+                else
+                {
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmmouse bg", new Vector2(0f, 0f), 3.5f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmmouse lights", new Vector2(0f, 0f), 2.4f, MenuDepthIllustration.MenuShader.SoftLight));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmmouse mouse", new Vector2(0f, 0f), 2.2f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "rmmouse fg", new Vector2(0f, 0f), 2.1f, MenuDepthIllustration.MenuShader.LightEdges));
+                    (self as InteractiveMenuScene).idleDepths.Add(3.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.1f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.0f);
+                    (self as InteractiveMenuScene).idleDepths.Add(1.5f);
+                }
+            }
+            else if (self.sceneID == RainMeadow.Ext_SceneID.Slugcat_MeadowOverseer)
+            {
+                self.sceneFolder = "Scenes" + Path.DirectorySeparatorChar.ToString() + "meadow - overseer";
+                if (self.flatMode)
+                {
+                    self.AddIllustration(new MenuIllustration(self.menu, self, self.sceneFolder, "MeadowOverseer - Flat", new Vector2(683f, 384f), false, true));
+                }
+                else
+                {
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "overseer - 5", new Vector2(0f, 0f), 3.5f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "overseer - 3", new Vector2(0f, 0f), 2.4f, MenuDepthIllustration.MenuShader.SoftLight));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "overseer - 2", new Vector2(0f, 0f), 2.2f, MenuDepthIllustration.MenuShader.Normal));
+                    self.AddIllustration(new MenuDepthIllustration(self.menu, self, self.sceneFolder, "overseer - 1", new Vector2(0f, 0f), 2.1f, MenuDepthIllustration.MenuShader.LightEdges));
+                    (self as InteractiveMenuScene).idleDepths.Add(3.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.2f);
+                    (self as InteractiveMenuScene).idleDepths.Add(2.1f);
+                    (self as InteractiveMenuScene).idleDepths.Add(1.5f);
+                }
+            }
+
+            if (string.IsNullOrEmpty(self.sceneFolder))
+            {
+                return;
+            }
+
+            string path2 = AssetManager.ResolveFilePath(self.sceneFolder + Path.DirectorySeparatorChar.ToString() + "positions_ims.txt");
+            if (!File.Exists(path2) || !(self is InteractiveMenuScene))
+            {
+                path2 = AssetManager.ResolveFilePath(self.sceneFolder + Path.DirectorySeparatorChar.ToString() + "positions.txt");
+            }
+            if (File.Exists(path2))
+            {
+                string[] array3 = File.ReadAllLines(path2);
+
+                for (int num3 = 0; num3 < array3.Length && num3 < self.depthIllustrations.Count; num3++)
+                {
+                    self.depthIllustrations[num3].pos.x = float.Parse(Regex.Split(RWCustom.Custom.ValidateSpacedDelimiter(array3[num3], ","), ", ")[0], NumberStyles.Any, CultureInfo.InvariantCulture);
+                    self.depthIllustrations[num3].pos.y = float.Parse(Regex.Split(RWCustom.Custom.ValidateSpacedDelimiter(array3[num3], ","), ", ")[1], NumberStyles.Any, CultureInfo.InvariantCulture);
+                    self.depthIllustrations[num3].lastPos = self.depthIllustrations[num3].pos;
+                }
+            }
+        }
+
+        private void SlugcatPage_AddImage(ILContext il)
+        {
+            var c = new ILCursor(il);
+            c.Index = il.Instrs.Count - 1;
+            c.GotoPrev(MoveType.Before,
+                (i) => i.MatchLdarg(0),
+                (i) => i.MatchLdflda<SlugcatSelectMenu.SlugcatPage>("sceneOffset"),
+                (i) => i.MatchLdflda<Vector2>("x"));
+            c.MoveAfterLabels();
+            c.Emit(OpCodes.Ldarg_0);
+            c.Emit(OpCodes.Ldloca, 0);
+            c.EmitDelegate((SlugcatSelectMenu.SlugcatPage self, ref MenuScene.SceneID sceneID) =>
+            {
+                if (self.slugcatNumber == RainMeadow.Ext_SlugcatStatsName.OnlineSessionPlayer && self is MeadowCharacterSelectPage mcsp)
+                {
+                    if (mcsp.character == MeadowProgression.Character.Slugcat)
+                    {
+                        sceneID = Menu.MenuScene.SceneID.Slugcat_White;
+                        self.sceneOffset = new Vector2(-10f, 100f);
+                        self.slugcatDepth = 3.1000001f;
+                    }
+                    else if (mcsp.character == MeadowProgression.Character.Cicada)
+                    {
+                        sceneID = RainMeadow.Ext_SceneID.Slugcat_MeadowSquidcicada;
+                        self.sceneOffset = new Vector2(-10f, 100f);
+                        self.slugcatDepth = 3.1000001f;
+                    }
+                    else if (mcsp.character == MeadowProgression.Character.Lizard)
+                    {
+                        sceneID = RainMeadow.Ext_SceneID.Slugcat_MeadowLizard;
+                        self.sceneOffset = new Vector2(-10f, 100f);
+                        self.slugcatDepth = 3.1000001f;
+                    }
+                    else if (mcsp.character == MeadowProgression.Character.Scavenger)
+                    {
+                        sceneID = RainMeadow.Ext_SceneID.Slugcat_MeadowScav;
+                        self.sceneOffset = new Vector2(-10f, 100f);
+                        self.slugcatDepth = 3.1000001f;
+                    }
+                    else if (mcsp.character == MeadowProgression.Character.Eggbug)
+                    {
+                        sceneID = RainMeadow.Ext_SceneID.Slugcat_MeadowEggbug;
+                        self.sceneOffset = new Vector2(-10f, 100f);
+                        self.slugcatDepth = 3.1000001f;
+                    }
+                    else if (mcsp.character == MeadowProgression.Character.Noodlefly)
+                    {
+                        sceneID = RainMeadow.Ext_SceneID.Slugcat_MeadowNoot;
+                        self.sceneOffset = new Vector2(-10f, 100f);
+                        self.slugcatDepth = 3.1000001f;
+                    }
+                    else if (mcsp.character == MeadowProgression.Character.LanternMouse)
+                    {
+                        sceneID = RainMeadow.Ext_SceneID.Slugcat_MeadowMouse;
+                        self.sceneOffset = new Vector2(-10f, 100f);
+                        self.slugcatDepth = 3.1000001f;
+                    }
+                    else if (mcsp.character == MeadowProgression.Character.Overseer)
+                    {
+                        sceneID = RainMeadow.Ext_SceneID.Slugcat_MeadowOverseer;
+                        self.sceneOffset = new Vector2(-10f, 100f);
+                        self.slugcatDepth = 3.1000001f;
+                    }
+                    else
+                    {
+                        //throw new InvalidProgrammerException("implement me");
+                    }
+                }
+
+                // if (isStoryMode(out var _) && !OnlineManager.lobby.isOwner)
+                // {
+                //     sceneID = Menu.MenuScene.SceneID.Intro_6_7_Rain_Drop;
+                //     self.sceneOffset = new Vector2(-10f, 100f);
+                //     self.slugcatDepth = 3.1000001f;
+                // }
+            });
+        }
+
+        private void ProcessManager_RequestMainProcessSwitch_ProcessID(On.ProcessManager.orig_RequestMainProcessSwitch_ProcessID orig, ProcessManager self, ProcessManager.ProcessID ID)
+        {
+            if (OnlineManager.lobby?.gameMode is OnlineGameMode gameMode and not MeadowGameMode)
+            {
+                // todo figure out a better way to do this proccess redirection, this isn't ideal
+                if (ID == ProcessManager.ProcessID.MainMenu || ID == ProcessManager.ProcessID.MultiplayerMenu || ID == ProcessManager.ProcessID.SlugcatSelect)
+                {
+                    if (self.currentMainLoop.ID == gameMode.MenuProcessId())
+                    {
+                        ID = Ext_ProcessID.LobbySelectMenu;
+                    }
+                    else
+                    {
+                        ID = gameMode.MenuProcessId();
+
+                        if (OnlineManager.lobby.isOwner)
+                        {
+                            foreach (OnlinePlayer player in OnlineManager.players)
+                                if (!player.isMe) player.InvokeOnceRPC(RPCs.ExitToGameModeMenu);
+                        }
+                    }
+                }
+            }
+
+            orig(self, ID);
+        }
+
+        private static bool consumedCommandLineJoinCode; // for rejoins on restart
+
+        private void ProcessManager_PostSwitchMainProcess(On.ProcessManager.orig_PostSwitchMainProcess orig, ProcessManager self, ProcessManager.ProcessID ID)
+        {
+            if (ID == Ext_ProcessID.LobbySelectMenu) self.currentMainLoop = new LobbySelectMenu(self);
+            if (ID == Ext_ProcessID.LobbyCreateMenu) self.currentMainLoop = new LobbyCreateMenu(self);
+            if (ID == Ext_ProcessID.ArenaLobbyMenu) self.currentMainLoop = new ArenaOnlineLobbyMenu(self);
+            if (ID == Ext_ProcessID.MeadowMenu) self.currentMainLoop = new MeadowMenu(self);
+            if (ID == Ext_ProcessID.StoryMenu) self.currentMainLoop = new StoryOnlineMenu(self);
+            if (ID == Ext_ProcessID.MeadowCredits) self.currentMainLoop = new MeadowCredits(self);
+
+            orig(self, ID);
+
+            if (ID == ProcessManager.ProcessID.MainMenu && !consumedCommandLineJoinCode)
+            {
+                consumedCommandLineJoinCode = true;
+                try
+                {
+                    var args = System.Environment.GetCommandLineArgs();
+                    var code = string.Join(" ", args);
+
+                    if (MatchmakingManager.TryParseJoinCode(code, out var domain, out _, out _)
+                        && MatchmakingManager.supported_matchmakers.Contains(domain))
+                    {
+                        RainMeadow.Info($"Rejoining lobby from the command line: {domain}");
+                        MatchmakingManager.pendingJoinCode = code;
+                        if (MatchmakingManager.currentDomain != domain)
+                            MatchmakingManager.currentDomain = domain;
+                        self.RequestMainProcessSwitch(Ext_ProcessID.LobbySelectMenu);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    RainMeadow.Debug(ex);
+                }
+            }
+        }
+
+        private static void IL_MainMenu_AddMainMenuButton(ILContext il)
+        {
+            try
+            {
+                ILCursor cursor = new(il);
+                const int maxCountLoc = 1; // int, max amount of buttons in a column
+
+                // int maxCount = _;
+                cursor.GotoNext(code => code.MatchStloc(maxCountLoc));
+                cursor.GotoPrev(MoveType.After, code => code.MatchLdcI4(out _));
+
+                // int maxCount = _ + 1;
+                cursor.Emit(OpCodes.Ldc_I4, 1);
+                cursor.Emit(OpCodes.Add);
+            }
+            catch (Exception ex)
+            {
+                Warn("failed to increase main menu button limit");
+                Error(ex);
+            }
+        }
+
+        private bool showed_no_steam_warning = false;
+
+        private void MainMenu_ctor(On.Menu.MainMenu.orig_ctor orig, MainMenu self, ProcessManager manager, bool showRegionSpecificBkg)
+        {
+            orig(self, manager, showRegionSpecificBkg);
+
+            if (!fullyInit)
+            {
+                self.manager.ShowDialog(new DialogNotify(self.Translate("Rain Meadow failed to start"), self.manager, null));
+                return;
+            }
+
+            SpecialEvents.GetActiveEvent()?.UpdateLoginMessage(self);
+
+            // we might get here from quitting out of game
+            OnlineManager.LeaveLobby();
+
+            var meadowButton = new SimpleButton(self, self.pages[0], self.Translate("MEADOW"), "MEADOW", Vector2.zero, new Vector2(Menu.MainMenu.GetButtonWidth(self.CurrLang), 30f));
+            self.AddMainMenuButton(meadowButton, () =>
+            {
+                if (!(OnlineManager.netIO is SteamNetIO) && !showed_no_steam_warning)
+                {
+                    showed_no_steam_warning = true;
+                    self.manager.ShowDialog(new DialogNotify(self.LongTranslate("Steam is not currently available. Some features of Rain Meadow have been disabled."), self.manager,
+                        () => self.manager.RequestMainProcessSwitch(Ext_ProcessID.LobbySelectMenu)));
+                    return;
+                }
+
+                OnlineManager.LeaveLobby();
+                self.manager.RequestMainProcessSwitch(Ext_ProcessID.LobbySelectMenu);
+                self.PlaySound(SoundID.MENU_Switch_Page_In);
+            }, self.mainMenuButtons.Count - 2);
+        }
+
+        // while the host scrolls  campaigns (or someone joins mid-scroll)
+        // SlugcatPageContinue can Update itself for a frame
+        // after its data is gone and nullref.
+        private bool SlugcatPageContinue_SaveDataFlag(Func<SlugcatSelectMenu.SlugcatPageContinue, bool> orig, SlugcatSelectMenu.SlugcatPageContinue self)
+        {
+            if (OnlineManager.lobby != null && self.saveGameData == null) return false;
+            return orig(self);
+        }
+        private int SlugcatPageContinue_SaveDataInt(Func<SlugcatSelectMenu.SlugcatPageContinue, int> orig, SlugcatSelectMenu.SlugcatPageContinue self)
+        {
+            if (OnlineManager.lobby != null && self.saveGameData == null) return 0;
+            return orig(self);
+        }
+
+        private Menu.SlugcatSelectMenu.SaveGameData? SlugcatSelectMenu_GetSaveGameData(On.Menu.SlugcatSelectMenu.orig_GetSaveGameData orig, global::Menu.SlugcatSelectMenu self, int pageIndex)
+        {
+            if (OnlineManager.lobby != null && !OnlineManager.lobby.isOwner)
+            {
+                if (isStoryMode(out var story))// && story.menuSaveGameData != null)
+                {
+                    return story.menuSaveGameData; // we will get this from the owner  if null next lobby tick
+                }
+            }
+            return orig(self, pageIndex);
+        }
+    }
+}

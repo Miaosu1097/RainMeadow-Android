@@ -1,0 +1,326 @@
+﻿using System;
+using System.Linq;
+using RWCustom;
+using UnityEngine;
+using Watcher;
+
+namespace RainMeadow
+{
+    public static class RPCs
+    {
+        [RPCMethod]
+        public static void DeathRain(RPCEvent rpc, GlobalRain.DeathRain.DeathRainMode deathRainMode,
+            float timeInThisMode, float calmBeforeStornSunlight)
+        {
+            if (rpc.from != OnlineManager.lobby.owner) return; // Only allow DeathRain from the host.
+            if ((RWCustom.Custom.rainWorld.processManager.currentMainLoop is RainWorldGame game && game.manager.upcomingProcess is not null))
+            {
+                if (game.globalRain.deathRain == null)
+                {
+                    game.globalRain.deathRain = new(game.globalRain);
+                }
+                game.globalRain.deathRain.deathRainMode = deathRainMode;
+                if (deathRainMode == GlobalRain.DeathRain.DeathRainMode.Mayhem) return;
+
+                if (deathRainMode == GlobalRain.DeathRain.DeathRainMode.GradeABuildUp)
+                {
+                    game.globalRain.ShaderLight = -1f;
+                }
+
+                game.globalRain.deathRain.progression = 0f;
+                game.globalRain.deathRain.timeInThisMode = timeInThisMode;
+                game.globalRain.deathRain.calmBeforeStormSunlight = calmBeforeStornSunlight;
+            }
+        }
+
+        [RPCMethod]
+        public static void Weapon_CreatureDeflect(OnlinePhysicalObject onlineWeapon, RealizedWeaponState realizedWeaponState, bool artificerParry, bool isSilent)
+        {
+            if (onlineWeapon.IsLocked("parry")) return;
+
+            try
+            {
+                if (onlineWeapon.apo.realizedObject is Weapon weapon)
+                {
+                    if (onlineWeapon.IsLocked("deflected")) // weapon was already deflected, no need to do anything.
+                    {
+                        RainMeadow.Debug($"Recieved {onlineWeapon} deflect RPC but the weapon was already deflected ! Ignoring.");
+                        return;
+                    }
+                    realizedWeaponState.ReadTo(onlineWeapon);  // actually, let everyone enjoy the spectacle.
+                    if (!isSilent)
+                    {
+                        if (artificerParry)
+                        {
+                            RainMeadow.PlayArtiParryCustomSound(weapon);
+                        }
+                        else
+                        {
+                            weapon.room.PlaySound(weapon is Spear ? SoundID.Spear_Bounce_Off_Creauture_Shell : SoundID.Rock_Bounce_Off_Creature_Shell, weapon.firstChunk);
+                            weapon.vibrate = 20;
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                // UnityEngine.Random.state = state;
+            }
+        }
+
+        [RPCMethod]
+        public static void Weapon_HitAnotherThrownWeapon(RPCEvent rpc,
+            OnlinePhysicalObject onlineWeapon1, OnlinePhysicalObject onlineWeapon2,
+            RealizedWeaponState realizedWeaponState1, RealizedWeaponState realizedWeaponState2,
+            Vector2 weapon1LastPos, Vector2 weapon2LastPos, // To get the right sound/visual effect
+            UnityEngine.Random.State rng)
+        {
+            if (onlineWeapon1.IsLocked("parry") || onlineWeapon2.IsLocked("parry")) return;
+            if (rpc.from != onlineWeapon1.owner && rpc.from != onlineWeapon2.owner) throw new InvalidOperationException("Not owner of either weapon");
+            var state = UnityEngine.Random.state;
+
+            try
+            {
+                UnityEngine.Random.state = rng;
+                if (onlineWeapon1.apo.realizedObject is Weapon weapon1 && onlineWeapon2.apo.realizedObject is Weapon weapon2)
+                {
+                    realizedWeaponState1.ReadTo(onlineWeapon1);
+                    weapon1.firstChunk.lastPos = weapon1LastPos;
+
+                    realizedWeaponState2.ReadTo(onlineWeapon2);
+                    weapon2.firstChunk.lastPos = weapon2LastPos;
+
+                    weapon1.HitAnotherThrownWeapon(weapon2);
+                }
+            }
+            finally
+            {
+                UnityEngine.Random.state = state;
+            }
+        }
+
+
+        [RPCMethod]
+        public static void DeltaReset(RPCEvent rpcEvent, OnlineResource onlineResource, OnlineEntity.EntityId entity)
+        {
+            RainMeadow.Debug($"from {rpcEvent.from} resource {onlineResource} entity {entity}");
+            if (entity != null)
+            {
+                foreach (var feed in OnlineManager.feeds)
+                {
+                    if (feed.player == rpcEvent.from && feed.entity.id == entity && feed.resource == onlineResource)
+                    {
+                        feed.ResetDeltas();
+                        return;
+                    }
+                }
+            }
+            else
+            {
+                foreach (var subscription in OnlineManager.subscriptions)
+                {
+                    if (subscription.player == rpcEvent.from && subscription.resource == onlineResource)
+                    {
+                        subscription.ResetDeltas();
+                        return;
+                    }
+                }
+            }
+        }
+
+        [RPCMethod]
+        public static void UpdateUsernameTemporarily(RPCEvent rpc, string lastSentMessage)
+        {
+            string incomingUsername = rpc.from.id.name;
+
+            RainMeadow.Debug("Incoming: " + incomingUsername + ": " + lastSentMessage);
+            if (ChatLogManager.ShouldMuteMessageFromUser(incomingUsername)) return;
+            if (RWCustom.Custom.rainWorld.processManager.currentMainLoop is RainWorldGame game)
+            {
+                foreach (var onlineHud in game.cameras[0].hud.parts.OfType<PlayerSpecificOnlineHud>())
+                {
+                    foreach (var part in onlineHud.parts.OfType<OnlinePlayerDisplay>())
+                    {
+                        if (part.player == rpc.from)
+                        {
+                            part.messageQueue.Enqueue(new OnlinePlayerDisplay.Message(lastSentMessage));
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        [RPCMethod]
+        public static void KickToLobby(RPCEvent rpc)
+        {
+            RainMeadow.Debug($"{rpc.from} is trying to kick {rpc.to}");
+            if (OnlineManager.lobby.owner != rpc.from) return; // Only respond if its the host kicking the player
+            if ((RWCustom.Custom.rainWorld.processManager.currentMainLoop is RainWorldGame game && game.manager.upcomingProcess is not null))
+            {
+                if (RWCustom.Custom.rainWorld.processManager.musicPlayer != null)
+                {
+                    RWCustom.Custom.rainWorld.processManager.musicPlayer.DeathEvent();
+                }
+
+                game.ExitGame(asDeath: true, asQuit: true);
+            }
+            RWCustom.Custom.rainWorld.processManager.RequestMainProcessSwitch(RainMeadow.Ext_ProcessID.LobbySelectMenu);
+            BanHammer.ShowBan(RWCustom.Custom.rainWorld.processManager);
+            OnlineManager.LeaveLobby();
+        }
+
+        [RPCMethod]
+        public static void ExitToGameModeMenu(RPCEvent rpc)
+        {
+            if (rpc.from != OnlineManager.lobby?.owner
+                || !(RWCustom.Custom.rainWorld.processManager.currentMainLoop is RainWorldGame game
+                    && game.manager.upcomingProcess is null)) return;
+
+            game.manager.RequestMainProcessSwitch(OnlineManager.lobby.gameMode.MenuProcessId());
+        }
+
+        [RPCMethod]
+        public static void Creature_Die(OnlinePhysicalObject opo, OnlinePhysicalObject saint)
+        {
+            if (!(RWCustom.Custom.rainWorld.processManager.currentMainLoop is RainWorldGame game && game.manager.upcomingProcess is null)) return;
+
+            if (saint != null && (opo.apo as AbstractCreature)?.realizedObject != null && (saint.apo as AbstractCreature)?.realizedCreature != null)
+            {
+                // Don't kill our friends!
+                if ((saint.apo as AbstractCreature).realizedCreature.FriendlyFireSafetyCandidate((opo.apo as AbstractCreature).realizedCreature)) return;
+
+                (opo.apo.realizedObject as Creature).SetKillTag(saint.apo as AbstractCreature);
+
+            }
+            (opo.apo as AbstractCreature)?.realizedCreature?.Die();
+            if (saint != null)
+            {
+                DeathMessage.PvPRPC(saint.apo.realizedObject as Player, opo.apo.realizedObject as Creature, 1);
+            }
+        }
+
+        [RPCMethod]
+        public static void KillFeedEnvironment(OnlinePhysicalObject opo, int index, OnlinePhysicalObject? blame)
+        {
+            if (!(RWCustom.Custom.rainWorld.processManager.currentMainLoop is RainWorldGame game && game.manager.upcomingProcess is null)) return;
+            OnlinePhysicalObject myKiller = null;
+            OnlinePhysicalObject myTarget = null;
+            foreach (var playerAvatar in OnlineManager.lobby.playerAvatars.Select(kv => kv.Value))
+            {
+                if (playerAvatar.type == (byte)OnlineEntity.EntityId.IdType.none) continue; // not in game
+                if (playerAvatar.FindEntity(true) is OnlinePhysicalObject opo1 && opo1.apo is AbstractCreature ac)
+                {
+                    if (blame != null && opo1.id == blame.id)
+                    {
+                        myKiller = opo1;
+                    }
+                    if (opo1.id == opo.id)
+                    {
+                        myTarget = opo1;
+                        if (blame == null) break;
+                    }
+                }
+            }
+            if (myTarget != null)
+            {
+                DeathMessage.DeathType type = (DeathMessage.DeathType)index;
+                DeathMessage.EnvironmentalDeathMessage(opo, type, blame);
+            }
+        }
+
+        [RPCMethod]
+        public static void KillFeedPvP(OnlinePhysicalObject killer, OnlinePhysicalObject target, int context)
+        {
+            if (!(RWCustom.Custom.rainWorld.processManager.currentMainLoop is RainWorldGame game && game.manager.upcomingProcess is null)) return;
+            OnlinePhysicalObject myKiller = null;
+            OnlinePhysicalObject myTarget = null;
+            foreach (var playerAvatar in OnlineManager.lobby.playerAvatars.Select(kv => kv.Value))
+            {
+                if (playerAvatar.type == (byte)OnlineEntity.EntityId.IdType.none) continue; // not in game
+                if (playerAvatar.FindEntity(true) is OnlinePhysicalObject opo1 && opo1.apo is AbstractCreature ac)
+                {
+                    if (opo1.id == killer.id)
+                    {
+                        myKiller = opo1;
+                    }
+                    if (opo1.id == target.id)
+                    {
+                        myTarget = opo1;
+                    }
+                }
+            }
+            if (myKiller != null)
+            {
+                if (myTarget == null && target.id.FindEntity(true) is OnlinePhysicalObject opo1 && opo1.apo is AbstractCreature ac)
+                {
+                    myTarget = opo1;
+                }
+                DeathMessage.PvPContext pvpContext = Enum.IsDefined(typeof(DeathMessage.PvPContext), context) ? (DeathMessage.PvPContext)context : DeathMessage.PvPContext.Default;
+                if ((target.apo as AbstractCreature).creatureTemplate.type == CreatureTemplate.Type.Slugcat)
+                {
+                    DeathMessage.PlayerKillPlayer(myKiller, myTarget, pvpContext);
+                }
+                else
+                {
+                    DeathMessage.PlayerKillCreature(myKiller, myTarget, pvpContext);
+                }
+            }
+        }
+        [RPCMethod]
+        public static void KillFeedCvP(OnlinePhysicalObject killer, OnlinePhysicalObject target)
+        {
+            if (!(RWCustom.Custom.rainWorld.processManager.currentMainLoop is RainWorldGame game && game.manager.upcomingProcess is null)) return;
+            OnlinePhysicalObject myTarget = null;
+            OnlinePhysicalObject myKiller = null;
+            foreach (var playerAvatar in OnlineManager.lobby.playerAvatars.Select(kv => kv.Value))
+            {
+                if (playerAvatar.type == (byte)OnlineEntity.EntityId.IdType.none) continue; // not in game
+                if (playerAvatar.FindEntity(true) is OnlinePhysicalObject opo1 && opo1.apo is AbstractCreature)
+                {
+                    if (opo1.id == target.id)
+                    {
+                        myTarget = opo1;
+                        break;
+                    }
+                }
+            }
+            if (killer.id.FindEntity(true) is OnlinePhysicalObject opo2 && opo2.apo is AbstractCreature)
+            {
+                myKiller = opo2;
+            }
+            DeathMessage.CreatureKillPlayer(myKiller, myTarget);
+        }
+
+        [RPCMethod]
+        public static void LightingMakerStrike(RPCEvent rpc, RoomSession roomSession, Vector2 pos, float branchingChance, float size, float effectRadius, float killRadius, int delayFrames)
+        {
+            var lm = roomSession.absroom.realizedRoom?.lightningMaker;
+            if (roomSession.owner != rpc.from || lm == null) return; // only allow RPC from room owner in a room with a lightning maker
+
+            // validate variables
+            branchingChance = Mathf.Clamp01(branchingChance);
+            size = Mathf.Clamp01(size);
+            effectRadius = Mathf.Clamp(effectRadius, 0f, 1000f);
+            killRadius = Mathf.Clamp(killRadius, 0f, 1000f);
+            delayFrames = Mathf.Clamp(delayFrames, 0, 400);
+            // spawn strikedata
+            if (lm.IsPosProtected(pos) && killRadius != 0) return;
+            var strikeData = new LightningMaker.StrikeData
+            {
+                pos = pos,
+                branchingChance = branchingChance,
+                effectRadius = effectRadius,
+                killRadius = killRadius,
+                buildupTime = delayFrames,
+                staticBuildup = new LightningMaker.StaticBuildup(pos, delayFrames, effectRadius, killRadius, lm.room, lm.mainColor)
+                {
+                    snapToWater = lm.room.PointSubmerged(pos)
+                }
+            };
+            strikeData.pos = strikeData.staticBuildup.pos;
+            lm.strikeQueue.Add(strikeData);
+            lm.room.AddObject(strikeData.staticBuildup);
+        }
+    }
+}

@@ -1,0 +1,345 @@
+﻿using Mono.Cecil.Cil;
+using MonoMod.Cil;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using UnityEngine;
+
+namespace RainMeadow
+{
+    // Support character customization (WIP)
+    public partial class RainMeadow
+    {
+        public static ConditionalWeakTable<Creature, AvatarData> creatureCustomizations = new();
+
+        public void CustomizationHooks()
+        {
+            IL.PlayerGraphics.ApplyPalette += PlayerGraphics_ApplyPalette;
+            IL.PlayerGraphics.ApplyPalette += PlayerGraphics_ApplyPalette_SaintTongue;
+            IL.PlayerGraphics.DrawSprites += PlayerGraphics_DrawSprites;
+            On.FFacetNode.PopulateRenderLayer += FFacetNode_PopulateRenderLayer;
+            On.FSprite.PopulateRenderLayer += FSprite_PopulateRenderLayer;
+            On.TriangleMesh.PopulateRenderLayer += TriangleMesh_PopulateRenderLayer;
+
+            // SlugcatCustomization stuff
+            On.PlayerGraphics.InitiateSprites += PlayerGraphicsOnInitiateSprites;
+            On.PlayerGraphics.ApplyPalette += PlayerGraphics_ApplyPalette_SlugcatCustomization;
+            On.PlayerGraphics.DrawSprites += PlayerGraphics_DrawSprites_SlugcatCustomization;
+            On.PlayerGraphics.Update += PlayerGraphics_Update_SlugcatCustomization;
+            On.PlayerGraphics.CustomColorSafety += PlayerGraphics_CustomColorSafety_SlugcatCustomization;
+            On.PlayerGraphics.CustomColorsEnabled += PlayerGraphics_CustomColorsEnabled_SlugcatCustomization;
+
+            // for cosmetics such as the capes.
+            CosmeticHooks();
+        }
+
+
+
+        public class OnPopulateRenderLayer
+        {
+            public static OnPopulateRenderLayer Get(FFacetNode node)
+            {
+                return OnPopulateRenderLayer.table.GetOrCreateValue(node);
+            }
+
+            public static ConditionalWeakTable<FFacetNode, OnPopulateRenderLayer> table = new();
+            public event Action<FFacetNode> onEvent = delegate { };
+
+            public void OnEvent(FFacetNode fFacetNode)
+            {
+                onEvent(fFacetNode);
+            }
+        }
+
+        public void FFacetNode_PopulateRenderLayer(On.FFacetNode.orig_PopulateRenderLayer orig, FFacetNode self)
+        {
+            orig(self);
+
+            if (OnPopulateRenderLayer.table.TryGetValue(self, out var onevent))
+            {
+                onevent.OnEvent(self);
+            }
+        }
+
+        public void FSprite_PopulateRenderLayer(On.FSprite.orig_PopulateRenderLayer orig, FSprite self)
+        {
+            orig(self);
+
+            if (OnPopulateRenderLayer.table.TryGetValue(self, out var onevent))
+            {
+                onevent.OnEvent(self);
+            }
+        }
+
+        public void TriangleMesh_PopulateRenderLayer(On.TriangleMesh.orig_PopulateRenderLayer orig, TriangleMesh self)
+        {
+            orig(self);
+
+            if (OnPopulateRenderLayer.table.TryGetValue(self, out var onevent))
+            {
+                onevent.OnEvent(self);
+            }
+        }
+
+        // eyecolor is overwritten every frame for some stupid reason
+        private void PlayerGraphics_DrawSprites(ILContext il)
+        {
+            try
+            {
+                var c = new ILCursor(il);
+                //VariableDefinition[] colors = il.Body.Variables.Where(v => v.VariableType.Resolve().FullName == typeof(Color).FullName).ToArray();
+                //var color1 = colors[0];
+                //var color2 = colors[1];
+
+                foreach (var colorVar in il.Body.Variables.Where(v => v.VariableType.Resolve().FullName == typeof(Color).FullName).Take(2))
+                {
+                    c.GotoNext(moveType: MoveType.Before,
+                    i => i.MatchLdarg(1),
+                    i => i.MatchLdfld<RoomCamera.SpriteLeaser>("sprites"),
+                    i => i.MatchLdcI4(9),
+                    i => i.MatchLdelemRef(),
+                    i => i.MatchLdloc(colorVar.Index),
+                    i => i.MatchCallOrCallvirt<FSprite>("set_color")
+                    );
+                    c.MoveAfterLabels();
+                    c.Emit(OpCodes.Ldarg_0);
+                    c.Emit(OpCodes.Ldloca, colorVar.Index);
+                    c.EmitDelegate((PlayerGraphics self, ref Color originalEyeColor) =>
+                    {
+                        if (RainMeadow.creatureCustomizations.TryGetValue(self.player, out var customization))
+                        {
+                            customization.ModifyEyeColor(ref originalEyeColor);
+                            // Keep Watcher camo eye transition
+                            if (ModManager.Watcher && self.player.SlugCatClass == Watcher.WatcherEnums.SlugcatStatsName.Watcher)
+                            {
+                                originalEyeColor = Color.Lerp(originalEyeColor, Color.white, self.player.camoProgress);
+                            }
+                        }
+                    });
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.LogError(e);
+            }
+        }
+
+        // bodycolor is set here
+        private void PlayerGraphics_ApplyPalette(ILContext il)
+        {
+            try
+            {
+                // watcher color fixes (jolly doesnt even work, but we do)
+                var c = new ILCursor(il);
+                c.GotoNext(moveType: MoveType.After,
+                    i => i.MatchStloc(0)
+                    );
+                c.MoveAfterLabels();
+                c.Emit(OpCodes.Ldarg_0);
+                c.Emit(OpCodes.Ldloca, 0);
+                c.EmitDelegate((PlayerGraphics self, ref Color originalBodyColor) =>
+                {
+                    if (RainMeadow.creatureCustomizations.TryGetValue(self.player, out var customization))
+                    {
+                        customization.ModifyBodyColor(ref originalBodyColor);
+                        RainMeadow.Trace("color became " + originalBodyColor);
+                    }
+                });
+            }
+            catch (Exception e)
+            {
+                Logger.LogError(e);
+            }
+        }
+
+        private void PlayerGraphics_ApplyPalette_SaintTongue(ILContext il)
+        {
+            // was:  if (useJollyColor || CustomColorsEnabled())
+            // now:  if (useJollyColor || (CustomColorsEnabled() && hackySlugcatCustomization is null))
+            try
+            {
+                var c = new ILCursor(il);
+                c.GotoNext(MoveType.After,
+                    i => i.MatchCall<PlayerGraphics>("get_useJollyColor"),
+                    i => i.MatchBrtrue(out _),
+                    i => i.MatchCall(typeof(PlayerGraphics), nameof(PlayerGraphics.CustomColorsEnabled)));
+                c.EmitDelegate((bool enabled) => enabled && hackySlugcatCustomization is null);
+            }
+            catch (Exception e)
+            {
+                Logger.LogError(e);
+            }
+        }
+
+        // SlugcatCustomization stuff
+        private static SlugcatCustomization? hackySlugcatCustomization;  // HACK: CustomColorSafety has no ref to player so we use this
+
+        // To explain further, basically try store a value into this field before orig in the relevant methods, then restore to null after orig
+        // Allows it to be read when the PlayerGraphics static methods are called
+
+        private void PlayerGraphicsOnInitiateSprites(On.PlayerGraphics.orig_InitiateSprites orig, PlayerGraphics self, RoomCamera.SpriteLeaser sLeaser, RoomCamera rCam)
+        {
+            var cachedCustomColors = PlayerGraphics.customColors;
+
+            try
+            {
+                creatureCustomizations.TryGetValue(self.player, out var customization);
+                hackySlugcatCustomization = customization as SlugcatCustomization;
+
+                if (hackySlugcatCustomization is not null)
+                {
+                    PlayerGraphics.customColors = hackySlugcatCustomization.currentColors;
+                }
+
+                orig(self, sLeaser, rCam);
+
+                // dev nightsky skin
+                if (customization != null && self.player.abstractCreature.GetOnlineObject() is OnlineEntity entity)
+                {
+                    if (customization.overlaySkin is OverlaySkin skin && skin.Available(entity))
+                    {
+                        var nightsky = rCam.game.rainWorld.Shaders["RM_NightSkySkin"];
+                        for (int i = 0; i < 10; i++) // 9 is face, 10 is Mark light
+                        {
+                            sLeaser.sprites[i].shader = nightsky;
+                            OnPopulateRenderLayer.Get(sLeaser.sprites[i]).onEvent += (FFacetNode node) =>
+                            {
+                                node._renderLayer._material.SetTexture("_RM_NightSky", skin.texture);
+                            };
+                        }
+                        if (ModManager.MSC)
+                        {
+                            if (self.player.SlugCatClass == MoreSlugcats.MoreSlugcatsEnums.SlugcatStatsName.Artificer && sLeaser.sprites.Length > 12)
+                            {
+                                sLeaser.sprites[12].shader = nightsky;
+                                OnPopulateRenderLayer.Get(sLeaser.sprites[12]).onEvent += (FFacetNode node) =>
+                                {
+                                    node._renderLayer._material.SetTexture("_RM_NightSky", skin.texture);
+                                };
+                            }
+                            if (self.player.SlugCatClass == MoreSlugcats.MoreSlugcatsEnums.SlugcatStatsName.Saint)
+                            {
+                                sLeaser.sprites[12].shader = nightsky;
+                                OnPopulateRenderLayer.Get(sLeaser.sprites[12]).onEvent += (FFacetNode node) =>
+                                {
+                                    node._renderLayer._material.SetTexture("_RM_NightSky", skin.texture);
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                hackySlugcatCustomization = null;
+                PlayerGraphics.customColors = cachedCustomColors;
+            }
+        }
+
+        private void PlayerGraphics_ApplyPalette_SlugcatCustomization(On.PlayerGraphics.orig_ApplyPalette orig, PlayerGraphics self, RoomCamera.SpriteLeaser sLeaser, RoomCamera rCam, RoomPalette palette)
+        {
+            var cachedCustomColors = PlayerGraphics.customColors;
+
+            try
+            {
+                creatureCustomizations.TryGetValue(self.player, out var customization);
+                hackySlugcatCustomization = customization as SlugcatCustomization;
+
+                if (hackySlugcatCustomization is not null)
+                {
+                    PlayerGraphics.customColors = hackySlugcatCustomization.currentColors;
+                }
+
+                orig(self, sLeaser, rCam, palette);
+            }
+            finally
+            {
+                hackySlugcatCustomization = null;
+                PlayerGraphics.customColors = cachedCustomColors;
+            }
+        }
+
+        private void PlayerGraphics_DrawSprites_SlugcatCustomization(On.PlayerGraphics.orig_DrawSprites orig, PlayerGraphics self, RoomCamera.SpriteLeaser sLeaser, RoomCamera rCam, float timeStacker, UnityEngine.Vector2 camPos)
+        {
+            var cachedCustomColors = PlayerGraphics.customColors;
+
+            try
+            {
+                creatureCustomizations.TryGetValue(self.player, out var customization);
+                hackySlugcatCustomization = customization as SlugcatCustomization;
+
+                if (hackySlugcatCustomization is not null)
+                {
+                    PlayerGraphics.customColors = hackySlugcatCustomization.currentColors;
+                }
+
+                orig(self, sLeaser, rCam, timeStacker, camPos);
+            }
+            finally
+            {
+                hackySlugcatCustomization = null;
+                PlayerGraphics.customColors = cachedCustomColors;
+            }
+
+            // Disable graphics manually when in ripple mode
+            int meRippleLayer = self.player.room?.game?.ActiveRippleLayer ?? 0;
+            int otherRippleLayer = self.player.abstractCreature.rippleLayer;
+            bool isWatcher = ModManager.Watcher && self.player.SlugCatClass == Watcher.WatcherEnums.SlugcatStatsName.Watcher;
+
+            if (otherRippleLayer == 0 && !self.culled)
+            {
+                for (int i = 0; i < 10; i++)
+                {
+                    if (i == 9 && isWatcher) continue;
+                    bool isVisibilityAlreadySet = i >= 4 && i <= 8;
+                    sLeaser.sprites[i].isVisible = isVisibilityAlreadySet
+                        ? meRippleLayer == otherRippleLayer && sLeaser.sprites[i].isVisible
+                        : meRippleLayer == otherRippleLayer;
+                }
+            }
+        }
+        private void PlayerGraphics_Update_SlugcatCustomization(On.PlayerGraphics.orig_Update orig, PlayerGraphics self)
+        {
+            var cachedCustomColors = PlayerGraphics.customColors;
+
+            try
+            {
+                creatureCustomizations.TryGetValue(self.player, out var customization);
+                hackySlugcatCustomization = customization as SlugcatCustomization;
+
+                if (hackySlugcatCustomization is not null)
+                {
+                    PlayerGraphics.customColors = hackySlugcatCustomization.currentColors;
+                }
+
+                orig(self); //Use correct glow color.
+            }
+            finally
+            {
+                hackySlugcatCustomization = null;
+                PlayerGraphics.customColors = cachedCustomColors;
+            }
+        }
+
+
+        // Statics, read hackySlugcatCustomization here
+        private bool PlayerGraphics_CustomColorsEnabled_SlugcatCustomization(On.PlayerGraphics.orig_CustomColorsEnabled orig)
+        {
+            if (hackySlugcatCustomization is not null)
+            {
+                return true;
+            }
+            return orig();
+        }
+
+        private Color PlayerGraphics_CustomColorSafety_SlugcatCustomization(On.PlayerGraphics.orig_CustomColorSafety orig, int staticColorIndex)
+        {
+            if (hackySlugcatCustomization is not null)
+            {
+                return hackySlugcatCustomization.GetColor(staticColorIndex);
+            }
+            return orig(staticColorIndex);
+        }
+    }
+}

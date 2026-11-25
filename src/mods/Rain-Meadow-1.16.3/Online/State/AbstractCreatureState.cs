@@ -1,0 +1,79 @@
+using MoreSlugcats;
+using Watcher;
+
+namespace RainMeadow
+{
+    public class AbstractCreatureState : AbstractPhysicalObjectState
+    {
+        [OnlineField(polymorphic = true)]
+        public CreatureStateState creatureStateState;
+        [OnlineField(group = "realized")]
+        public WorldCoordinate destination;
+        [OnlineFieldHalf(group = "realized")]
+        public float Hypothermia;
+
+        public AbstractCreatureState() : base() { }
+        public AbstractCreatureState(OnlineCreature onlineEntity, OnlineResource inResource, uint ts) : base(onlineEntity, inResource, ts)
+        {
+            creatureStateState = GetCreatureStateState(onlineEntity);
+            if (onlineEntity.creature.abstractAI is AbstractCreatureAI absAi)
+            {
+                destination = absAi.destination;
+            }
+            Hypothermia = onlineEntity.creature.Hypothermia;
+        }
+
+        protected virtual CreatureStateState GetCreatureStateState(OnlineCreature onlineCreature)
+        {
+            if ((onlineCreature.apo as AbstractCreature).state is StowawayBugState) return new StowawayStateState(onlineCreature); // Order matters
+            if ((onlineCreature.apo as AbstractCreature).state is SandGrubState) return new SandGrubStateState(onlineCreature);
+            if ((onlineCreature.apo as AbstractCreature).state is Vulture.VultureState) return new VultureStateState(onlineCreature);
+            if ((onlineCreature.apo as AbstractCreature).state is BigMoth.BigMothState) return new MothStateState(onlineCreature);
+            if ((onlineCreature.apo as AbstractCreature).state is HealthState) return new CreatureHealthStateState(onlineCreature);
+            if ((onlineCreature.apo as AbstractCreature).state is PlayerNPCState) return new PlayerNPCStateState(onlineCreature);
+            if ((onlineCreature.apo as AbstractCreature).state is PlayerState) return new PlayerStateState(onlineCreature);
+            return new CreatureStateState(onlineCreature);
+        }
+
+        protected override RealizedPhysicalObjectState GetRealizedState(OnlinePhysicalObject onlineObject)
+        {
+            // Order matters, make sure classes that inherit others are checked before what they're inheriting.
+            if (onlineObject.apo.realizedObject is Player) return new RealizedPlayerState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is Overseer) return new RealizedOverseerState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is Fly) return new RealizedFlyState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is TubeWorm) return new RealizedTubeWormState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is GarbageWorm) return new RealizedGarbageWormState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is SandGrub) return new RealizedSandGrubState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is StowawayBug) return new RealizedStowawayState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is EggBug) return new RealizedEggBugState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is BigNeedleWorm) return new RealizedBigNeedleWormState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is SmallNeedleWorm) return new RealizedSmallNeedleWormState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is BigMoth) return new RealizedMothState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is BoxWorm) return new RealizedBoxWormState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is DaddyLongLegs) return new RealizedDaddyLongLegsState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is Deer) return new RealizedDeerState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is DropBug) return new RealizedDropBugState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is Scavenger) return new RealizedScavengerState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is Vulture) return new RealizedVultureState((OnlineCreature)onlineObject);
+            if (onlineObject.apo.realizedObject is Lizard) return new RealizedLizardState((OnlineCreature)onlineObject);
+            // Do not put anything below Creature or you'll be stuck debugging for hours.
+            if (onlineObject.apo.realizedObject is Creature) return new RealizedCreatureState((OnlineCreature)onlineObject);
+            return base.GetRealizedState(onlineObject);
+        }
+
+        public override void ReadTo(OnlineEntity onlineEntity)
+        {
+            base.ReadTo(onlineEntity);
+            var abstractCreature = (AbstractCreature)((OnlineCreature)onlineEntity).apo;
+            creatureStateState.ReadTo(abstractCreature);
+            if (abstractCreature.abstractAI is AbstractCreatureAI absAi)
+            {
+                if (destination.room != absAi.destination.room || destination.abstractNode != absAi.destination.abstractNode)
+                {
+                    absAi.SetDestinationNoPathing(destination, migrate: true);
+                }
+            }
+            abstractCreature.Hypothermia = Hypothermia;
+        }
+    }
+}

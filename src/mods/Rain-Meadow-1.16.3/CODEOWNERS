@@ -1,0 +1,20 @@
+# default
+*			@henpemaz
+
+# general (no owner)
+/Game/		
+/GameModes/	
+/Menu/		
+/OnlineUIComponents/
+/Utils/		
+/Online/RPCs.cs	
+/Online/ConsumableRPCs.cs	
+/Mod/text/
+CHANGELOG.md
+
+# team specific
+/Arena/		@6fears7 @invalidunits
+/Story/		@6fears7 @invalidunits
+/Meadow/	@henpemaz
+/Online/NetIO/  @invalidunits 
+/Online/Matchmaking/  @invalidunits
