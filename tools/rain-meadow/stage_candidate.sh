@@ -70,8 +70,12 @@ printf '%s\n' "Verified plugin: $plugin"
 if [ "$package" -eq 0 ]; then
     exit 0
 fi
-python3 -IB "$runtime/stage_audio.py" "$source/Mod" --stage "$run/audio" --decode > "$run/audio.json"
-set -- --mod "$source/Mod" --audio "$run/audio" --shader "$1" --plugin "$plugin" "$2"
+assets=${RAIN_MEADOW_ASSET_SOURCE:-}
+if [ -z "$assets" ]; then
+    assets=$(python3 -IB tools/rain-meadow/ci_inputs.py upstream)
+fi
+python3 -IB "$runtime/stage_audio.py" "$assets/Mod" --stage "$run/audio" --decode > "$run/audio.json"
+set -- --mod "$assets/Mod" --overlay-mod "$source/Mod" --audio "$run/audio" --shader "$1" --plugin "$plugin" "$2"
 if [ "$steam_probe" -eq 1 ]; then
     sh tools/rain-meadow/steam/stage_dependencies.sh
     if [ "${RAIN_MEADOW_STEAM_SDR:-0}" = 1 ]; then

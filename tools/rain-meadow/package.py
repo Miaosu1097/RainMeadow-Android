@@ -28,7 +28,8 @@ def files_in(root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mod", type=workspace_path, default=ROOT / "src/mods/Rain-Meadow-1.16.3/Mod")
+    parser.add_argument("--mod", type=workspace_path, required=True)
+    parser.add_argument("--overlay-mod", type=workspace_path)
     parser.add_argument("--audio", type=workspace_path, required=True)
     parser.add_argument("--shader", type=workspace_path, required=True)
     parser.add_argument("--plugin", type=workspace_path, required=True)
@@ -55,12 +56,14 @@ def main():
             parser.error(f"Missing staged audio directory: {folder}")
         replacements.update(normalized)
 
-    files = {
-        path: source for path, source in files_in(args.mod)
-        if path.parts[0] not in {"plugins", "patchers"}
-        and path != BUNDLE.with_suffix(".manifest")
-        and not any(path.is_relative_to(folder) for folder in AUDIO_DIRS)
-    }
+    files = {}
+    for mod in filter(None, (args.mod, args.overlay_mod)):
+        files.update({
+            path: source for path, source in files_in(mod)
+            if path.parts[0] not in {"plugins", "patchers"}
+            and path != BUNDLE.with_suffix(".manifest")
+            and not any(path.is_relative_to(folder) for folder in AUDIO_DIRS)
+        })
     if Path("modinfo.json") not in files:
         parser.error("The upstream Mod folder must contain modinfo.json")
     files.update(replacements)
@@ -68,7 +71,8 @@ def main():
     for source in files.values():
         if not source.is_file() or (source in required and source.stat().st_size == 0):
             parser.error(f"Missing candidate input: {source}")
-    if args.output in files.values() or args.output.is_relative_to(args.mod) or args.output.is_relative_to(args.audio):
+    inputs = (args.mod, args.overlay_mod, args.audio)
+    if args.output in files.values() or any(args.output.is_relative_to(folder) for folder in filter(None, inputs)):
         parser.error("Choose a package path outside the input asset directories")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

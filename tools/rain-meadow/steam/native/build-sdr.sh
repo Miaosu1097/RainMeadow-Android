@@ -31,6 +31,9 @@ do
 done < "$tool/sdr-headers.lock"
 
 valve=${RAIN_MEADOW_VALVE_ANDROID_SO:-"$transport/native/androidarm64/libsteamnetworkingsockets.so"}
+if [ ! -s "$valve" ]; then
+    valve=$(python3 -IB tools/rain-meadow/ci_inputs.py valve)
+fi
 python3 -IB "$tool/prepare_valve_android.py" "$valve" "$work/libsteamnetworkingsockets.so"
 java_home=${JAVA_HOME:?Set JAVA_HOME to the JDK used by javac}
 if [ -n "${ANDROID_NDK_HOME:-}" ]; then
