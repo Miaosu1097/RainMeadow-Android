@@ -323,7 +323,7 @@ namespace RainMeadow
             if (cape_cache.TryGetValue(player, out var entry) && entry is not null) return entry;
             if (player is SteamMatchmakingManager.SteamPlayerId steamid)
             {
-                ulong steamID = steamid.oid.GetSteamID64();
+                ulong steamID = steamid.steamID.m_SteamID;
                 SHA256 Sha = SHA256.Create();
                 var hashed_cape_str = System.Convert.ToBase64String(Sha.ComputeHash(Encoding.ASCII.GetBytes(steamID.ToString())));
                 RainMeadow.Debug(hashed_cape_str);

@@ -31,11 +31,17 @@ public class LobbyCreateMenu : SmartMenu
     private ProperlyAlignedMenuLabel timelineDescription;
     private OpTypeBox passwordInputBox;
     private MenuDialogBox? popupDialog;
+#if MEADOW_STEAM_GAMEPLAY
+    private readonly ManagedSteamGameplay? managedSteam;
+#endif
     public override MenuScene.SceneID GetScene => ModManager.MMF ? manager.rainWorld.options.subBackground : MenuScene.SceneID.Landscape_SU;
 
     public string? meadowTimeline;
     public LobbyCreateMenu(ProcessManager manager) : base(manager, RainMeadow.Ext_ProcessID.LobbyCreateMenu)
     {
+#if MEADOW_STEAM_GAMEPLAY
+        managedSteam = MatchmakingManager.currentInstance as ManagedSteamGameplay;
+#endif
         // title at the top
         this.scene.AddIllustration(new MenuIllustration(this, this.scene, "illustrations/rainmeadowtitle", Utils.GetMeadowTitleFileName(true), new Vector2(-2.99f, 265.01f), true, false));
         this.scene.AddIllustration(new MenuIllustration(this, this.scene, "illustrations/rainmeadowtitle", Utils.GetMeadowTitleFileName(false), new Vector2(-2.99f, 265.01f), true, false));
@@ -189,6 +195,9 @@ public class LobbyCreateMenu : SmartMenu
 
     public void OnLobbyJoined(bool ok, string error = "")
     {
+        if (popupDialog is not DialogBoxAsyncWait)
+            return;
+
         if (!ok)
         {
             ShowErrorDialog(error);
@@ -202,8 +211,6 @@ public class LobbyCreateMenu : SmartMenu
             if (MatchmakingManager.currentInstance is SteamMatchmakingManager steamMatchmakingManager)
                 SteamMatchmaking.SetLobbyData(steamMatchmakingManager.lobbyID, MatchmakingManager.CAMPAIGN_KEY, meadowTimeline);
         }
-
-        MatchmakingManager.OnLobbyJoined -= OnLobbyJoined;
     }
 
     public override void Init()
@@ -251,6 +258,13 @@ public class LobbyCreateMenu : SmartMenu
 
     private void CreateLobby(SimplerButton obj)
     {
+        if (popupDialog != null)
+            return;
+#if MEADOW_STEAM_GAMEPLAY
+        if (managedSteam?.HasPendingRoomOperation == true)
+            return;
+#endif
+
         ShowLoadingDialog("Creating lobby...");
         ApplyLobbyLimit();
         RainMeadow.Debug($"Creating a lobby with a max player limit of {maxPlayerCount}");
@@ -269,7 +283,15 @@ public class LobbyCreateMenu : SmartMenu
         RainMeadow.DebugMe();
         Enum.TryParse<MatchmakingManager.LobbyVisibility>(visibilityDropDown.value, out var value);
         string? password = passwordInputBox.value.IsNullOrWhiteSpace() ? null : passwordInputBox.value;
-        MatchmakingManager.currentInstance.CreateLobby(value, modeDropDown.value, password, maxPlayerCount, this.lobbyPinnedCheckBox?.GetValueBool() ?? false);
+        bool pinned = lobbyPinnedCheckBox?.GetValueBool() ?? false;
+#if MEADOW_STEAM_GAMEPLAY
+        if (managedSteam != null)
+        {
+            managedSteam.CreateHostedLobby(value, modeDropDown.value, password, maxPlayerCount, pinned, meadowTimeline);
+            return;
+        }
+#endif
+        MatchmakingManager.currentInstance.CreateLobby(value, modeDropDown.value, password, maxPlayerCount, pinned);
     }
 
     private void ShowLoadingDialog(string text)
@@ -305,8 +327,19 @@ public class LobbyCreateMenu : SmartMenu
         if (message == "HIDE_DIALOG") HideDialog();
     }
 
+#if MEADOW_STEAM_GAMEPLAY
+    public override void OnBack(SimplerButton obj)
+    {
+        managedSteam?.CancelPendingCreation();
+        base.OnBack(obj);
+    }
+#endif
+
     public override void ShutDownProcess()
     {
+#if MEADOW_STEAM_GAMEPLAY
+        managedSteam?.CancelPendingCreation();
+#endif
         base.ShutDownProcess();
         MatchmakingManager.OnLobbyJoined -= OnLobbyJoined;
     }

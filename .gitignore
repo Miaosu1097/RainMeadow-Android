@@ -1,0 +1,12 @@
+/.cache/
+/archives/
+/artifacts/
+/libs/
+/release/
+/work/
+**/bin/
+**/obj/
+__pycache__/
+*.py[cod]
+*.log
+.env

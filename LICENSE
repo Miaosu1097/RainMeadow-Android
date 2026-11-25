@@ -1,0 +1,16 @@
+License scope
+
+MIT (see LICENSES/MIT.txt) applies to original contributions from this
+Android port, including the original Android changes in the Rain Meadow tree,
+the original build and porting tools under tools/, and the Android IME plugin
+under src/mods/Android-IME/.
+
+The Rain Meadow snapshot under src/mods/Rain-Meadow-1.16.3/ is based on
+https://github.com/henpemaz/Rain-Meadow at commit
+59bbcf55c3815b6d23ca564780cf299cf63599a7. Upstream code and assets retain
+their original copyright and licensing status. Existing third-party notices,
+including the JZlib notice, apply to their respective material. The MIT grant
+above is limited to the original contributions of this port.
+
+External game assemblies, Valve binaries, and other dependencies have their
+own license terms.

@@ -205,6 +205,12 @@ namespace RainMeadow
             List<MenuObject> SkinColumnElements = skinButtons.Cast<MenuObject>().ToList();
             //Enforce row/column element order
             Extensions.TrySequentialMutualBind(this, BottomRowElements, leftRight: true, loopLastIndex: true);
+            if (SkinColumnElements.Count == 0)
+            {
+                // Locked character previews have no skin buttons. Clear links to the previous page.
+                Extensions.TryMassDeleteBind(BottomRowElements, top: true, bottom: true);
+                return;
+            }
             Extensions.TrySequentialMutualBind(this, SkinColumnElements.Concat(new List<MenuObject>() { backObject }).ToList(), bottomTop: true, loopLastIndex: true, reverseList: true);
             //Make the row and column play nicely
             Extensions.TryMassBind(SkinColumnElements, startButton, right: true);

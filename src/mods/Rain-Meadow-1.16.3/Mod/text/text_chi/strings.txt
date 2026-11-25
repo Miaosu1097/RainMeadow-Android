@@ -687,3 +687,6 @@ This player does not have a profile.|此玩家没有个人资料
 Steam is not currently available. Some features of Rain Meadow have been disabled.|Steam当前不可用，雨甸的一些功能已被禁用。
 Rain Meadow failed to start|在线游戏启动失败
 Rain Meadow: Please use an external mod to access Inv's campaign.|雨甸：请使用外部模组访问Inv的战役
+Sign in to Steam|登录 Steam
+Sign in with Steam QR code|Steam 扫码登录
+Sign out of Steam|退出 Steam 登录

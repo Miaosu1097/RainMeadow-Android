@@ -360,7 +360,9 @@ namespace RainMeadow
         private static void SubTrack_StopAndDestroy(On.Music.MusicPiece.SubTrack.orig_StopAndDestroy orig, MusicPiece.SubTrack self)
         {
             orig(self);
-            self.source?.clip?.UnloadAudioData();
+            // The game already stops and destroys menu sources on Android.
+            if (Application.platform != RuntimePlatform.Android || self.piece.context != MusicPlayer.MusicContext.Menu)
+                self.source?.clip?.UnloadAudioData();
         } 
         internal static void NewGame()
         {

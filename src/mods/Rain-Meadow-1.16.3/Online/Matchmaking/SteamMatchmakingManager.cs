@@ -277,6 +277,21 @@ namespace RainMeadow
         private static string creatingWithMode;
         private static bool creatingPinned;
         private static string? lobbyPassword;
+        internal static Dictionary<string, string> BuildLobbyMetadata(string ownerName, string mode, string? password, bool pinned)
+        {
+            return new Dictionary<string, string>
+            {
+                [CLIENT_KEY] = CLIENT_VAL,
+                [NAME_KEY] = ownerName,
+                [MODE_KEY] = mode,
+                [MODS_KEY] = RainMeadowModManager.ModArrayToString(RainMeadowModManager.GetRequiredMods()),
+                [BANNED_MODS_KEY] = RainMeadowModManager.ModArrayToString(RainMeadowModManager.GetBannedMods()),
+                [WHITELIST_KEY] = RainMeadowModManager.ModArrayToString(RainMeadowModManager.GetWhitelistedMods().ToArray()),
+                [PASSWORD_KEY] = password != null ? "true" : "false",
+                [PINNED_KEY] = pinned ? "true" : "false",
+            };
+        }
+
         private void LobbyCreated(LobbyCreated_t param, bool bIOFailure)
         {
             try
@@ -286,14 +301,8 @@ namespace RainMeadow
                 {
                     RainMeadow.Debug("success");
                     lobbyID = new CSteamID(param.m_ulSteamIDLobby);
-                    SteamMatchmaking.SetLobbyData(lobbyID, CLIENT_KEY, CLIENT_VAL);
-                    SteamMatchmaking.SetLobbyData(lobbyID, NAME_KEY, SteamFriends.GetPersonaName());
-                    SteamMatchmaking.SetLobbyData(lobbyID, MODE_KEY, creatingWithMode);
-                    SteamMatchmaking.SetLobbyData(lobbyID, MODS_KEY, RainMeadowModManager.ModArrayToString(RainMeadowModManager.GetRequiredMods()));
-                    SteamMatchmaking.SetLobbyData(lobbyID, BANNED_MODS_KEY, RainMeadowModManager.ModArrayToString(RainMeadowModManager.GetBannedMods()));
-                    SteamMatchmaking.SetLobbyData(lobbyID, WHITELIST_KEY, RainMeadowModManager.ModArrayToString(RainMeadowModManager.GetWhitelistedMods().ToArray()));
-                    SteamMatchmaking.SetLobbyData(lobbyID, PASSWORD_KEY, lobbyPassword != null ? "true" : "false");
-                    SteamMatchmaking.SetLobbyData(lobbyID, PINNED_KEY, creatingPinned ? "true" : "false");
+                    foreach (var entry in BuildLobbyMetadata(SteamFriends.GetPersonaName(), creatingWithMode, lobbyPassword, creatingPinned))
+                        SteamMatchmaking.SetLobbyData(lobbyID, entry.Key, entry.Value);
                     SteamMatchmaking.SetLobbyMemberLimit(lobbyID, MAX_LOBBY);
                     OnlineManager.lobby = new Lobby(new OnlineGameMode.OnlineGameModeType(creatingWithMode), OnlineManager.mePlayer, lobbyPassword);
                     SteamFriends.SetRichPresence("connect", lobbyID.ToString());

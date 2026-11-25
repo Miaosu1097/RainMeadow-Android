@@ -1,4 +1,9 @@
 using System.Net;
+#if MEADOW_STEAM_PROBE
+using System;
+using System.Linq;
+using System.Threading;
+#endif
 using Menu;
 using RainMeadow.UI.Components;
 using RainMeadow.UI.Dialogs;
@@ -14,6 +19,20 @@ public class LobbySelectMenu : SmartMenu
     public ProperlyAlignedMenuLabel statisticsLabel;
     public LobbyCardSelector lobbyCardSelector;
     public SimplerButton joinButton;
+    private readonly SimplerButton createButton;
+    private readonly LobbySelectNetworkPanel networkPanel;
+    private Music.Song? androidLobbySong;
+    private bool previousLobbySongLoop;
+#if MEADOW_STEAM_PROBE
+    private readonly CancellationTokenSource steamMenuLifetime = new();
+    private SteamLobbySession? steamSession;
+    private SteamLobbySession? steamListRequest;
+#if !MEADOW_STEAM_GAMEPLAY
+    private SteamLobbySession? steamJoinRequest;
+    private SteamLobbySession? steamIdentityRequest;
+#endif
+    private bool restoreSteamSignIn = true;
+#endif
     public DialogAsyncWaitCancellable? joiningDialog;
     public LobbyInfo? lastSelectedLobbyInfo;
 
@@ -97,11 +116,7 @@ public class LobbySelectMenu : SmartMenu
         );
 
         lobbyCardSelector = new LobbyCardSelector(this, mainPage, new Vector2(225, 105));
-#pragma warning disable IDE0200
-        // this forces RefreshLobbies to fetch the actual currentInstance instead of just forcefully pointing at the original currentInstance
-        lobbyCardSelector.RefreshLobbies += () =>
-            MatchmakingManager.currentInstance.RequestLobbyList();
-#pragma warning restore IDE0200
+        lobbyCardSelector.RefreshLobbies += RefreshLobbyList;
         lobbyCardSelector.OnLobbyCardsUpdated += () =>
         {
             metadataPanel?.ClearLobbyInfo();
@@ -127,7 +142,7 @@ public class LobbySelectMenu : SmartMenu
         // button can't be clicked if SelectedLobby is null (see Update())
         joinButton.OnClick += (btn) => JoinLobbyChecks(lobbyCardSelector.SelectedLobby!);
 
-        SimplerButton createButton = new(
+        createButton = new(
             this,
             mainPage,
             Translate("CREATE!"),
@@ -137,6 +152,20 @@ public class LobbySelectMenu : SmartMenu
         );
         createButton.OnClick += (btn) =>
         {
+#if MEADOW_STEAM_PROBE
+            if (networkPanel.IsManagedSteamSelected)
+            {
+#if MEADOW_STEAM_GAMEPLAY
+                if (steamSession is not SteamLobbySession { IsConnected: true } session)
+                    return;
+                ManagedSteamGameplay.Activate(session);
+                // The managed matchmaker keeps the login while the creation menu opens.
+                steamSession = null;
+#else
+                return;
+#endif
+            }
+#endif
             manager.RequestMainProcessSwitch(RainMeadow.Ext_ProcessID.LobbyCreateMenu);
             PlaySound(SoundID.MENU_Switch_Page_In);
         };
@@ -161,7 +190,14 @@ public class LobbySelectMenu : SmartMenu
         tabContainer.AddTab(filterTab, Translate("Filters"));
 
         TabContainer.Tab networkTab = new(this, tabContainer);
-        LobbySelectNetworkPanel networkPanel = new(this, networkTab, Vector2.zero);
+        networkPanel = new(this, networkTab, Vector2.zero);
+#if MEADOW_STEAM_PROBE
+        networkPanel.OnSteamSignedIn += UseSteamSession;
+        networkPanel.OnSteamSignedOut += SignOutSteam;
+#if !MEADOW_STEAM_GAMEPLAY
+        networkPanel.OnSteamIdentityCheck += CheckSteamIdentity;
+#endif
+#endif
         networkPanel.OnDirectConnectButtonClick += () =>
         {
             DirectConnectionDialog directConnectionDialog = new(manager, UIUtils.DIALOG_SIZE);
@@ -170,8 +206,9 @@ public class LobbySelectMenu : SmartMenu
         };
         networkPanel.OnDomainChanged += () =>
         {
-            lobbyCardSelector.ClearLobbyCards();
-            MatchmakingManager.currentInstance.RequestLobbyList();
+            lobbyCardSelector.UpdateLobbyInfos(System.Array.Empty<LobbyInfo>());
+            UpdateStats();
+            RefreshLobbyList();
         };
         networkTab.AddObjects(networkPanel);
         tabContainer.AddTab(networkTab, Translate("Network"));
@@ -189,8 +226,19 @@ public class LobbySelectMenu : SmartMenu
         if (
             RainMeadow.rainMeadowOptions.GetLobbyMusic(out string song)
             && !string.IsNullOrEmpty(song)
+            && manager.musicPlayer is Music.MusicPlayer musicPlayer
         )
-            manager.musicPlayer?.MenuRequestsSong(song, 1, 0);
+        {
+            musicPlayer.MenuRequestsSong(song, 1, 0);
+            if (Application.platform == RuntimePlatform.Android
+                && (musicPlayer.nextSong ?? musicPlayer.song) is Music.Song menuSong
+                && menuSong.context == Music.MusicPlayer.MusicContext.Menu)
+            {
+                androidLobbySong = menuSong;
+                previousLobbySongLoop = menuSong.Loop;
+                menuSong.Loop = true;
+            }
+        }
 
         // Lobby machine go!
         MatchmakingManager.OnLobbyListReceived += OnLobbyListReceived;
@@ -202,7 +250,7 @@ public class LobbySelectMenu : SmartMenu
             )
         )
             SteamNetworkingUtils.InitRelayNetworkAccess();
-        MatchmakingManager.currentInstance.RequestLobbyList();
+        RefreshLobbyList();
 
         if (MatchmakingManager.ConsumePendingJoinCode(out var joinCode))
         {
@@ -217,6 +265,165 @@ public class LobbySelectMenu : SmartMenu
             manager.ShowDialog(new UpdateDialog(manager));
     }
 
+    private void RefreshLobbyList()
+    {
+#if MEADOW_STEAM_PROBE
+        if (networkPanel.IsManagedSteamSelected && steamSession is SteamLobbySession session)
+        {
+            RefreshSteamRooms(session);
+            return;
+        }
+#endif
+        MatchmakingManager.currentInstance.RequestLobbyList();
+    }
+
+#if MEADOW_STEAM_PROBE
+    private void UseSteamSession(SteamLobbySession session)
+    {
+        if (steamMenuLifetime.IsCancellationRequested)
+        {
+            session.Dispose();
+            return;
+        }
+
+#if MEADOW_STEAM_GAMEPLAY
+        if (!ReferenceEquals(steamSession, session)) ManagedSteamGameplay.CloseSession(steamSession);
+#else
+        steamSession?.Dispose();
+#endif
+        steamSession = session;
+        networkPanel.EnableManagedSteam();
+        RefreshSteamRooms(session);
+    }
+
+    private void SignOutSteam()
+    {
+        restoreSteamSignIn = false;
+        var session = steamSession;
+        steamSession = null;
+#if MEADOW_STEAM_GAMEPLAY
+        ManagedSteamGameplay.CloseSession(session);
+#else
+        session?.Dispose();
+#endif
+        networkPanel.DisableManagedSteam();
+    }
+
+    private bool IsCurrentSteamView(SteamLobbySession session)
+        => !steamMenuLifetime.IsCancellationRequested && ReferenceEquals(steamSession, session)
+            && networkPanel.IsManagedSteamSelected;
+
+    private async void RefreshSteamRooms(SteamLobbySession session)
+    {
+        if (ReferenceEquals(steamListRequest, session))
+            return;
+        steamListRequest = session;
+        statisticsLabel.text = Translate("Requesting Steam lobbies...");
+        try
+        {
+            var rooms = await session.GetRoomsAsync(RainMeadow.MeadowVersionStr, steamMenuLifetime.Token);
+            if (!IsCurrentSteamView(session))
+                return;
+            LobbyInfo[] lobbies = rooms.Select(room => (LobbyInfo)new ManagedSteamLobbyInfo(room)).ToArray();
+            lobbyCardSelector.UpdateLobbyInfos(lobbies);
+            UpdateStats();
+            if (rooms.Length == 0)
+                statisticsLabel.text = Translate("No matching Steam rooms") + " | " + RainMeadow.MeadowVersionStr;
+        }
+        catch (Exception error)
+        {
+            if (IsCurrentSteamView(session))
+                statisticsLabel.text = SteamRequestError(error);
+        }
+        finally
+        {
+            if (ReferenceEquals(steamListRequest, session))
+                steamListRequest = null;
+        }
+    }
+
+#if !MEADOW_STEAM_GAMEPLAY
+    private async void CheckSteamIdentity()
+    {
+        var session = steamSession;
+        if (session == null || !IsCurrentSteamView(session) || ReferenceEquals(steamIdentityRequest, session))
+            return;
+
+        steamIdentityRequest = session;
+        networkPanel.SteamIdentityCheckPending = true;
+        string report;
+        try
+        {
+            report = await SteamNetworkIdentityCheck.RunAsync(session, steamMenuLifetime.Token);
+            RainMeadow.Info(report);
+        }
+        catch (Exception error)
+        {
+            report = SteamRequestError(error);
+            RainMeadow.Warn(report);
+        }
+        finally
+        {
+            if (ReferenceEquals(steamIdentityRequest, session))
+            {
+                steamIdentityRequest = null;
+                networkPanel.SteamIdentityCheckPending = false;
+            }
+        }
+
+        if (IsCurrentSteamView(session))
+            manager.ShowDialog(new NotifyDialog(manager, report, new Vector2(760f, 200f)));
+    }
+
+    private async void TestSteamJoin(ManagedSteamLobbyInfo lobby)
+    {
+        var session = steamSession;
+        if (session == null || !IsCurrentSteamView(session) || ReferenceEquals(steamJoinRequest, session))
+            return;
+
+        steamJoinRequest = session;
+        string report;
+        try
+        {
+            var result = await session.TestJoinAsync(lobby.LobbyId, steamMenuLifetime.Token);
+            if (result.Success)
+            {
+                report = $"Steam accepted the lobby join. Members at join: {result.Members}.<LINE>" +
+                    "The test left the Steam lobby after checking membership.<LINE>" +
+                    "Rain Meadow game transport over Steam is pending.";
+            }
+            else
+            {
+                report = $"Steam lobby join returned {result.Response}.";
+            }
+            RainMeadow.Info(report.Replace("<LINE>", " "));
+        }
+        catch (Exception error)
+        {
+            report = SteamRequestError(error);
+            RainMeadow.Warn(report);
+        }
+        finally
+        {
+            if (ReferenceEquals(steamJoinRequest, session))
+                steamJoinRequest = null;
+        }
+
+        if (IsCurrentSteamView(session))
+            manager.ShowDialog(new NotifyDialog(manager, report, new Vector2(740f, 320f)));
+    }
+
+#endif
+
+    private static string SteamRequestError(Exception error)
+        => error switch
+        {
+            SteamLobbyProbe.ReplyTimeoutException or SteamLobbyProbe.SteamResultException => error.Message,
+            SteamLobbyProbe.SteamConnectionClosedException or OperationCanceledException => "Steam session closed. Sign in again.",
+            _ => "Steam request failed (" + error.GetType().Name + ").",
+        };
+#endif
+
     public void UpdateStats()
     {
         int playerCount = 0;
@@ -228,6 +435,15 @@ public class LobbySelectMenu : SmartMenu
 
     public void JoinLobbyChecks(LobbyInfo lobbyInfo)
     {
+#if MEADOW_STEAM_PROBE && !MEADOW_STEAM_GAMEPLAY
+        if (lobbyInfo is ManagedSteamLobbyInfo steamLobby)
+        {
+            TestSteamJoin(steamLobby);
+            return;
+        }
+#endif
+        if (!EnsureSteamSessionForJoin(lobbyInfo))
+            return;
         MatchmakingManager.MAX_LOBBY = lobbyInfo.maxPlayerCount;
         if (lobbyInfo.maxPlayerCount <= lobbyInfo.playerCount)
         {
@@ -251,6 +467,24 @@ public class LobbySelectMenu : SmartMenu
             StartJoiningLobby(lobbyInfo);
     }
 
+    // ManagedSteamLobbyInfo resolves its join code through MatchmakingManager.instances,
+    // so the Steam manager must be registered before StartJoiningLobby asks for it.
+    private bool EnsureSteamSessionForJoin(LobbyInfo lobbyInfo)
+    {
+#if MEADOW_STEAM_GAMEPLAY
+        if (lobbyInfo is ManagedSteamLobbyInfo)
+        {
+            if (steamSession is not SteamLobbySession session || !session.IsConnected)
+            {
+                manager.ShowDialog(new NotifyDialog(manager, "Sign in to Steam before joining.", UIUtils.DIALOG_SIZE));
+                return false;
+            }
+            ManagedSteamGameplay.Activate(session);
+        }
+#endif
+        return true;
+    }
+
     public void StartJoiningLobby(LobbyInfo lobbyInfo, string? password = null)
     {
         RainMeadowModManager.CheckMods(
@@ -265,6 +499,8 @@ public class LobbySelectMenu : SmartMenu
 
     public void RequestJoinLobby(LobbyInfo lobbyInfo, string? password)
     {
+        if (!EnsureSteamSessionForJoin(lobbyInfo))
+            return;
         manager.ShowDialog(
             joiningDialog = new DialogAsyncWaitCancellable(
                 this,
@@ -317,6 +553,10 @@ public class LobbySelectMenu : SmartMenu
 
     public void OnLobbyListReceived(bool ok, LobbyInfo[] lobbies)
     {
+#if MEADOW_STEAM_PROBE
+        if (networkPanel.IsManagedSteamSelected)
+            return;
+#endif
         if (!ok)
         {
             RainMeadow.Warn("Lobby IO failure");
@@ -363,7 +603,59 @@ public class LobbySelectMenu : SmartMenu
     public override void Update()
     {
         base.Update();
-        joinButton.buttonBehav.greyedOut = lobbyCardSelector.SelectedLobby == null;
+#if MEADOW_STEAM_PROBE
+        if (restoreSteamSignIn && manager.dialog == null && manager.upcomingProcess == null)
+        {
+            restoreSteamSignIn = false;
+#if MEADOW_STEAM_GAMEPLAY
+            if (ManagedSteamGameplay.BrowserSession is SteamLobbySession { IsConnected: true } previous)
+                UseSteamSession(previous);
+            else
+#endif
+                networkPanel.RestoreSteamSignIn();
+        }
+
+        if (steamSession is SteamLobbySession session)
+        {
+            session.Pump();
+            if (!session.IsConnected
+#if MEADOW_STEAM_GAMEPLAY
+                && !ManagedSteamGameplay.Owns(session)
+#else
+                && !ReferenceEquals(steamJoinRequest, session)
+#endif
+            )
+            {
+                steamSession = null;
+#if MEADOW_STEAM_GAMEPLAY
+                ManagedSteamGameplay.CloseSession(session);
+#else
+                session.Dispose();
+#endif
+                networkPanel.DisableManagedSteam();
+            }
+        }
+        bool managedSteam = networkPanel.IsManagedSteamSelected;
+#if MEADOW_STEAM_GAMEPLAY
+        createButton.buttonBehav.greyedOut = managedSteam && steamSession is not { IsConnected: true };
+#else
+        createButton.buttonBehav.greyedOut = managedSteam;
+#endif
+#if MEADOW_STEAM_GAMEPLAY
+        bool joiningSteam = managedSteam && joiningDialog != null && manager.dialog == joiningDialog;
+        var joinText = Translate(joiningSteam ? "JOINING..." : "JOIN");
+#else
+        bool joiningSteam = managedSteam && steamJoinRequest != null && ReferenceEquals(steamJoinRequest, steamSession);
+        var joinText = Translate(joiningSteam ? "TESTING..." : managedSteam ? "TEST JOIN" : "JOIN");
+#endif
+        if (joinButton.menuLabel.text != joinText)
+            joinButton.menuLabel.text = joinText;
+#endif
+        joinButton.buttonBehav.greyedOut =
+#if MEADOW_STEAM_PROBE
+            joiningSteam ||
+#endif
+            lobbyCardSelector.SelectedLobby == null;
 
         if (joinResolved)
         {
@@ -420,8 +712,29 @@ public class LobbySelectMenu : SmartMenu
     public override void ShutDownProcess()
     {
         RainMeadow.DebugMe();
+        if (androidLobbySong != null && manager.musicPlayer is Music.MusicPlayer player
+            && (player.song == androidLobbySong || player.nextSong == androidLobbySong))
+        {
+            androidLobbySong.Loop = previousLobbySongLoop;
+        }
+
         MatchmakingManager.OnLobbyListReceived -= OnLobbyListReceived;
         MatchmakingManager.OnLobbyJoined -= OnLobbyJoined;
+#if MEADOW_STEAM_PROBE
+        networkPanel.OnSteamSignedIn -= UseSteamSession;
+        networkPanel.OnSteamSignedOut -= SignOutSteam;
+#if !MEADOW_STEAM_GAMEPLAY
+        networkPanel.OnSteamIdentityCheck -= CheckSteamIdentity;
+#endif
+        steamMenuLifetime.Cancel();
+#if MEADOW_STEAM_GAMEPLAY
+        if (!ManagedSteamGameplay.Owns(steamSession)) ManagedSteamGameplay.CloseSession(steamSession);
+#else
+        steamSession?.Dispose();
+#endif
+        steamSession = null;
+        steamMenuLifetime.Dispose();
+#endif
         base.ShutDownProcess();
     }
 }

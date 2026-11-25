@@ -1,0 +1,7 @@
+{
+  "id": "rwandroid.ime",
+  "name": "Android Input Method",
+  "version": "0.1.1",
+  "target_game_version": "v1.11.8",
+  "description": "Opens the Android keyboard for Rain World text fields. Also provides native text input for Android mods."
+}
