@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -19,10 +20,30 @@ internal static class Audit
     private static string BodyHash(MethodDefinition method)
     {
         var body = method.Body;
-        var text = string.Join("\n", body.Variables.Select(local => local.VariableType.FullName))
-            + "\n" + string.Join("\n", body.Instructions.Select(item => item.ToString()))
-            + "\n" + string.Join("\n", body.ExceptionHandlers.Select(region =>
-                $"{region.HandlerType} {region.CatchType} {region.TryStart} {region.TryEnd} {region.HandlerStart} {region.HandlerEnd} {region.FilterStart}"));
+        var positions = body.Instructions.Select((instruction, index) => (instruction, index))
+            .ToDictionary(item => item.instruction, item => item.index);
+        int Position(Instruction instruction) => instruction == null ? -1 : positions[instruction];
+
+        string Operand(object operand)
+        {
+            switch (operand)
+            {
+                case Instruction target: return Position(target).ToString(CultureInfo.InvariantCulture);
+                case Instruction[] targets: return string.Join(",", targets.Select(Position));
+                case VariableDefinition local: return local.Index.ToString(CultureInfo.InvariantCulture);
+                case ParameterDefinition parameter: return parameter.Index.ToString(CultureInfo.InvariantCulture);
+                case string literal: return Convert.ToBase64String(Encoding.Unicode.GetBytes(literal));
+                case float single: return BitConverter.ToInt32(BitConverter.GetBytes(single), 0).ToString("x8", CultureInfo.InvariantCulture);
+                case double number: return BitConverter.DoubleToInt64Bits(number).ToString("x16", CultureInfo.InvariantCulture);
+                default: return Convert.ToString(operand, CultureInfo.InvariantCulture);
+            }
+        }
+
+        var text = body.InitLocals + "\n" + string.Join("\n", body.Variables.Select(local => local.VariableType.FullName))
+            + "\n" + string.Join("\n", body.Instructions.Select(item => item.OpCode.Name + " " + Operand(item.Operand)))
+            + "\n" + string.Join("\n", body.ExceptionHandlers.Select(region => string.Join(" ",
+                region.HandlerType, region.CatchType, Position(region.TryStart), Position(region.TryEnd),
+                Position(region.HandlerStart), Position(region.HandlerEnd), Position(region.FilterStart))));
         using (var hash = SHA256.Create())
             return BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(text))).Replace("-", "").ToLowerInvariant();
     }
@@ -31,8 +52,39 @@ internal static class Audit
         module.Types.SelectMany(AllTypes).SelectMany(type => type.Methods)
             .ToDictionary(method => method.FullName, StringComparer.Ordinal);
 
+    private static void PrintFingerprints(string assembly, string manifest)
+    {
+        using (var game = ModuleDefinition.ReadModule(assembly))
+        {
+            var methods = Methods(game);
+            foreach (var line in File.ReadLines(manifest))
+            {
+                if (line.Length == 0 || line[0] == '#')
+                {
+                    Console.WriteLine(line);
+                    continue;
+                }
+
+                int separator = line.IndexOf('\t');
+                if (separator < 0 || separator == line.Length - 1)
+                    throw new InvalidDataException("Expected hash and method signature: " + line);
+                var signature = line.Substring(separator + 1);
+                var fingerprint = !methods.TryGetValue(signature, out var method) ? "missing-target"
+                    : method.HasBody ? BodyHash(method) : "no-body";
+                Console.WriteLine(fingerprint + "\t" + signature);
+            }
+        }
+    }
+
     private static void Main(string[] args)
     {
+        CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+        if (args.Length == 3 && args[0] == "--fingerprints")
+        {
+            PrintFingerprints(args[1], args[2]);
+            return;
+        }
+
         if (args.Length < 3 || args.Length > 4)
             throw new ArgumentException("Usage: Audit GAME HOOKS SUBSCRIPTIONS [PC_GAME]");
 

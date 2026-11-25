@@ -28,7 +28,7 @@ def files_in(root):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mod", type=workspace_path, default=ROOT / "src/mods/Rain-Meadow/Mod")
+    parser.add_argument("--mod", type=workspace_path, default=ROOT / "src/mods/Rain-Meadow-1.16.3/Mod")
     parser.add_argument("--audio", type=workspace_path, required=True)
     parser.add_argument("--shader", type=workspace_path, required=True)
     parser.add_argument("--plugin", type=workspace_path, required=True)

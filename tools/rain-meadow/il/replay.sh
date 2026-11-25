@@ -4,12 +4,12 @@ WORKSPACE_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/../../.." && pwd)
 . "$WORKSPACE_ROOT/tools/rain-meadow/env.sh"
 cd "$WORKSPACE_ROOT"
 output=work/rain-meadow/il-replay
-managed=libs/game/Managed
+managed=$RAIN_MEADOW_GAME_MANAGED
 mkdir -p "$output"
 for library in Mono.Cecil MonoMod.Utils MonoMod.Common MonoMod.RuntimeDetour BepInEx; do
     cp "$managed/$library.dll" "$output/"
 done
-csc -nologo -out:"$output/Replay.exe" -reference:"$output/Mono.Cecil.dll" -reference:"$output/MonoMod.Utils.dll" -reference:"$output/BepInEx.dll" -reference:"$output/MonoMod.RuntimeDetour.dll" tools/rain-meadow/il/Replay.cs tools/rain-meadow/il/BatchJit.cs
+sh tools/rain-meadow/csc.sh -out:"$output/Replay.exe" -reference:"$output/Mono.Cecil.dll" -reference:"$output/MonoMod.Utils.dll" -reference:"$output/BepInEx.dll" -reference:"$output/MonoMod.RuntimeDetour.dll" tools/rain-meadow/il/Replay.cs tools/rain-meadow/il/BatchJit.cs
 if [ "${1:-}" = "--generate" ]; then
     MONO_PATH= mono "$output/Replay.exe" "$@"
     exit

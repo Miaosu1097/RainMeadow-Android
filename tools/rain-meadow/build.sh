@@ -5,11 +5,11 @@ WORKSPACE_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$WORKSPACE_ROOT"
 
 work=${RAIN_MEADOW_BUILD_DIR:-work/rain-meadow/build}
-managed=libs/game/Managed
-sources=${RAIN_MEADOW_SOURCE:-src/mods/Rain-Meadow}
+managed=$RAIN_MEADOW_GAME_MANAGED
+sources=$RAIN_MEADOW_SOURCE
 overlay=${RAIN_MEADOW_OVERLAY:-}
 steam_probe=${RAIN_MEADOW_STEAM_PROBE_DEPS:-}
-python -IB - "$work" "$sources" "$overlay" "$steam_probe" <<'PYCHECK'
+python3 -IB - "$work" "$sources" "$overlay" "$steam_probe" <<'PYCHECK'
 import sys
 from pathlib import Path
 
@@ -20,16 +20,16 @@ for value in filter(None, sys.argv[1:]):
 PYCHECK
 
 # Use installed compiler tools, with the game and framework references explicit.
-framework=${MONO_FRAMEWORK_REFS:-"${PREFIX:?Set MONO_FRAMEWORK_REFS or PREFIX}/lib/mono/4.8-api"}
+framework=$MONO_FRAMEWORK_REFS
 compiler=${ROSLYN_CSC:-.cache/rain-meadow/roslyn-5.0.0/tasks/netcore/bincore/csc.dll}
 test -f "$compiler"
 test -f "$framework/mscorlib.dll"
 mkdir -p "$work/refs" "$work/bin"
-csc -nologo -target:exe -out:"$work/Publicize.exe" -reference:"$managed/Mono.Cecil.dll" tools/rain-meadow/il/Publicize.cs
+sh tools/rain-meadow/csc.sh -target:exe -out:"$work/Publicize.exe" -reference:"$managed/Mono.Cecil.dll" tools/rain-meadow/il/Publicize.cs
 cp "$managed/Mono.Cecil.dll" "$work/Mono.Cecil.dll"
 MONO_PATH= mono "$work/Publicize.exe" "$managed/Assembly-CSharp.dll" "$work/refs/Assembly-CSharp.dll"
 
-python -IB - "$sources" "$work" "$framework" "$overlay" "$steam_probe" <<'PY'
+python3 -IB - "$sources" "$work" "$framework" "$overlay" "$steam_probe" "$managed" <<'PY'
 import os
 import sys
 from pathlib import Path
@@ -37,16 +37,17 @@ from pathlib import Path
 source, work, framework = map(Path, sys.argv[1:4])
 overlay = Path(sys.argv[4]) if sys.argv[4] else None
 steam_probe = Path(sys.argv[5]) if sys.argv[5] else None
-managed = Path("libs/game/Managed")
+managed = Path(sys.argv[6])
 references = [
     work / "refs/Assembly-CSharp.dll",
+    managed / "HOOKS-Assembly-CSharp.dll",
     Path("libs/rain-meadow/Newtonsoft.Json.dll"),
 ]
 references.extend(
     path for path in sorted(managed.glob("*.dll"))
     if path.name.startswith(("Unity", "Rewired", "MonoMod", "Mono.Cecil"))
     or path.stem in {
-        "Assembly-CSharp-firstpass", "HOOKS-Assembly-CSharp", "0Harmony", "BepInEx",
+        "Assembly-CSharp-firstpass", "0Harmony", "BepInEx",
         "BepInEx.Harmony", "HarmonyXInterop", "com.rlabrecque.steamworks.net",
         "ICSharpCode.SharpZipLib", "GalaxyCSharp",
     }

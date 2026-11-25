@@ -1,0 +1,37 @@
+name: Rain Meadow Android
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      game_revision:
+        description: Game snapshot directory under libs/game
+        type: string
+      build:
+        description: Managed verification or complete Android mod ZIP
+        type: choice
+        default: verify
+        options: [verify, package]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rain-meadow-android-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: [self-hosted, linux, x64, rain-meadow-build]
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          clean: false
+          persist-credentials: false
+      - name: Compile for the selected game revision
+        env:
+          GAME_REVISION: ${{ inputs.game_revision || vars.RAIN_MEADOW_GAME_REVISION }}
+          BUILD_MODE: ${{ inputs.build || 'verify' }}
+        run: sh tools/rain-meadow/ci.sh "$BUILD_MODE" "$GAME_REVISION"

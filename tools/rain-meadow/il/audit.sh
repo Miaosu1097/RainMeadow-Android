@@ -3,14 +3,14 @@ set -eu
 WORKSPACE_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/../../.." && pwd)
 . "$WORKSPACE_ROOT/tools/rain-meadow/env.sh"
 cd "$WORKSPACE_ROOT"
-sources=${RAIN_MEADOW_SOURCE:-src/mods/Rain-Meadow}
-managed=libs/game/Managed
+sources=$RAIN_MEADOW_SOURCE
+managed=$RAIN_MEADOW_GAME_MANAGED
 work=work/rain-meadow/il-audit
 mkdir -p "$work"
 cp "$managed/Mono.Cecil.dll" "$work/"
-csc -nologo -out:"$work/Audit.exe" -reference:"$managed/Mono.Cecil.dll" tools/rain-meadow/il/Audit.cs
+sh tools/rain-meadow/csc.sh -out:"$work/Audit.exe" -reference:"$managed/Mono.Cecil.dll" tools/rain-meadow/il/Audit.cs
 
-python -IB - "$sources" "$work" <<'PY'
+python3 -IB - "$sources" "$work" <<'PY'
 import re
 import sys
 from pathlib import Path

@@ -66,6 +66,31 @@ internal static partial class Replay
         return null;
     }
 
+    private static string HookTarget(MethodDefinition declaration) =>
+        declaration?.Body?.Instructions.Where(item => item.OpCode.Code == Code.Ldtoken)
+            .Select(item => item.Operand).OfType<MethodReference>().SingleOrDefault()?.FullName;
+
+    private static void ValidateOnHooks(IEnumerable<MethodDefinition> pluginMethods,
+        Dictionary<string, MethodDefinition> declarations, Dictionary<string, MethodDefinition> gameMethods)
+    {
+        var usedHooks = pluginMethods.Where(method => method.HasBody)
+            .SelectMany(method => method.Body.Instructions).Select(item => item.Operand).OfType<MethodReference>()
+            .Where(call => call.DeclaringType.Scope.Name == "HOOKS-Assembly-CSharp"
+                && call.DeclaringType.FullName.StartsWith("On.", StringComparison.Ordinal)
+                && call.Name.StartsWith("add_", StringComparison.Ordinal))
+            .Select(call => call.FullName).Distinct();
+        var errors = new List<string>();
+        foreach (var hook in usedHooks)
+        {
+            declarations.TryGetValue(hook, out var declaration);
+            var target = HookTarget(declaration);
+            if (target == null || !gameMethods.ContainsKey(target))
+                errors.Add(hook + " -> " + (target ?? "unresolved target"));
+        }
+        if (errors.Count != 0)
+            throw new InvalidDataException("HookGen does not match the game assembly:\n" + string.Join("\n", errors));
+    }
+
     private static List<Registration> RegistrationOrder(string plugin, string managed)
     {
         using (var module = ModuleDefinition.ReadModule(plugin))
@@ -74,6 +99,7 @@ internal static partial class Replay
         {
             var pluginMethods = MethodIndex(module);
             var declarations = MethodIndex(hookgen);
+            ValidateOnHooks(pluginMethods.Values, declarations, MethodIndex(game));
             var registrations = new List<Registration>();
             var visited = new HashSet<MethodDefinition>();
 
@@ -94,9 +120,7 @@ internal static partial class Replay
                         if (reflective)
                             target = FindPropertyGetter(code, game);
                         else if (declarations.TryGetValue(callee.FullName, out var declaration))
-                            target = declaration.Body.Instructions
-                                .Where(item => item.OpCode.Code == Code.Ldtoken)
-                                .Select(item => item.Operand).OfType<MethodReference>().SingleOrDefault()?.FullName;
+                            target = HookTarget(declaration);
 
                         var callback = FindCallback(code);
                         bool known = callback != null && pluginMethods.TryGetValue(callback.FullName, out var handler)
@@ -197,7 +221,7 @@ internal static partial class Replay
             output.WriteLine("scope\ttarget\tcallback\tstatus\tdetail\tlocation");
             void Record(Registration row, string callback, string status, string detail)
             {
-                if (status != "compiled" && status != "anchor-error")
+                if (status != "compiled")
                     failed = true;
                 output.WriteLine(string.Join("\t", row.Startup ? "startup" : "other", row.Target, callback,
                     status, Flatten(detail), row.Location));

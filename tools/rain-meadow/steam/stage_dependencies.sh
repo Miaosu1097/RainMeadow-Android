@@ -24,16 +24,16 @@ done
 
 patch_dir="$work/compression-patch"
 mkdir -p "$patch_dir"
-cp libs/game/Managed/Mono.Cecil.dll "$patch_dir/"
-csc -nologo -langversion:latest "-out:$patch_dir/PatchSteamCompression.exe" \
+cp "$RAIN_MEADOW_GAME_MANAGED/Mono.Cecil.dll" "$patch_dir/"
+sh tools/rain-meadow/csc.sh -langversion:latest "-out:$patch_dir/PatchSteamCompression.exe" \
     -r:"$patch_dir/Mono.Cecil.dll" tools/rain-meadow/steam/PatchSteamCompression.cs
 MONO_PATH= mono "$patch_dir/PatchSteamCompression.exe" "$dependencies/SteamKit2.dll" \
-    libs/game/Managed/ICSharpCode.SharpZipLib.dll "$stage/plugins/SteamKit2.dll"
+    "$RAIN_MEADOW_GAME_MANAGED/ICSharpCode.SharpZipLib.dll" "$stage/plugins/SteamKit2.dll"
 cp tools/rain-meadow/steam/PatchSteamCompression.cs "$licenses/SteamKit2-Android-Compression.cs"
 
 if [ "${RAIN_MEADOW_STEAM_GAMEPLAY:-0}" = 1 ]; then
     native=${RAIN_MEADOW_STEAM_TRANSPORT:?Path to the ARM64 Steam transport is required}
-    python -IB - "$native" <<'PYVALIDATE'
+    python3 -IB - "$native" <<'PYVALIDATE'
 from pathlib import Path
 import sys
 path = Path(sys.argv[1]).resolve()
@@ -41,8 +41,14 @@ if not path.is_relative_to(Path.cwd()) or not path.is_file():
     sys.exit("Steam transport must be an existing file inside the workspace.")
 PYVALIDATE
     cp "$native" "$stage/plugins/libmeadow_steam_transport.so"
-    cp "$PREFIX/lib/libc++_shared.so" "$stage/plugins/libc++_shared.so"
-    cp "$PREFIX/share/doc/libc++/copyright" "$licenses/libc++-LICENSE.txt"
+    if [ -n "${ANDROID_NDK_HOME:-}" ]; then
+        ndk_sysroot="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+        cp "$ndk_sysroot/usr/lib/aarch64-linux-android/libc++_shared.so" "$stage/plugins/"
+        cp "$ANDROID_NDK_HOME/NOTICE" "$licenses/libc++-LICENSE.txt"
+    else
+        cp "$PREFIX/lib/libc++_shared.so" "$stage/plugins/"
+        cp "$PREFIX/share/doc/libc++/copyright" "$licenses/libc++-LICENSE.txt"
+    fi
     if [ "${RAIN_MEADOW_STEAM_SDR:-0}" = 1 ]; then
         sdr=work/rain-meadow/1.16.3/steam-transport/sdr-build
         cp "$sdr/libsteamnetworkingsockets.so" "$sdr/rwmeadow-native-loader.dex" "$stage/plugins/"

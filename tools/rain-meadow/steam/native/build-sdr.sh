@@ -30,10 +30,16 @@ do
     mv "$destination.partial" "$destination"
 done < "$tool/sdr-headers.lock"
 
-python -IB "$tool/prepare_valve_android.py" "$transport/native/androidarm64/libsteamnetworkingsockets.so" \
-    "$work/libsteamnetworkingsockets.so"
+valve=${RAIN_MEADOW_VALVE_ANDROID_SO:-"$transport/native/androidarm64/libsteamnetworkingsockets.so"}
+python3 -IB "$tool/prepare_valve_android.py" "$valve" "$work/libsteamnetworkingsockets.so"
 java_home=${JAVA_HOME:?Set JAVA_HOME to the JDK used by javac}
-clang++ -std=c++17 -O2 -Wall -Wextra -Werror -fPIC -fvisibility=hidden -fno-termux-rpath -shared -Wl,--no-undefined \
+if [ -n "${ANDROID_NDK_HOME:-}" ]; then
+    set -- "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++" --target=aarch64-linux-android24
+else
+    : "${PREFIX:?Set ANDROID_NDK_HOME on Linux or use Termux}"
+    set -- clang++ -fno-termux-rpath
+fi
+"$@" -std=c++17 -O2 -Wall -Wextra -Werror -fPIC -fvisibility=hidden -shared -Wl,--no-undefined \
     -DSTEAMNETWORKINGSOCKETS_STANDALONELIB -DMEADOW_VALVE_SDR -isystem "$sdk" \
     -isystem "$java_home/include" -isystem "$java_home/include/linux" \
     "$tool/meadow_transport.cpp" "$tool/meadow_native_loader.cpp" -ldl -o "$work/libmeadow_steam_transport.so"
