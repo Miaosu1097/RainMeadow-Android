@@ -50,6 +50,7 @@ namespace RainMeadowAndroidExtras
         private static string latestVersion;
         private static string latestNotes;
         private static string latestDownload;
+        private static string latestTarget;
         private static bool latestForce;
 
         internal static void Install(RainWorld self)
@@ -186,6 +187,7 @@ namespace RainMeadowAndroidExtras
                 latestVersion = ver;
                 latestNotes = json.Value<string>("notes") ?? "";
                 latestDownload = json.Value<string>("download") ?? "";
+                latestTarget = json.Value<string>("target") ?? "";
                 latestForce = json.Value<bool?>("force") ?? false;
                 hasResult = true;
 
@@ -258,7 +260,10 @@ namespace RainMeadowAndroidExtras
             if (string.IsNullOrEmpty(dir)) { OpenUrl(latestDownload); yield break; }
 
             Directory.CreateDirectory(dir);
-            string target = Path.Combine(dir, "Rain Meadow.dll.new");
+
+            // target 为空时默认替换 Rain Meadow.dll
+            string fileName = string.IsNullOrWhiteSpace(latestTarget) ? "Rain Meadow.dll" : latestTarget;
+            string target = Path.Combine(dir, fileName + ".new");
 
             using (var req = UnityWebRequest.Get(latestDownload))
             {
@@ -292,8 +297,9 @@ namespace RainMeadowAndroidExtras
             {
                 var pm = rainWorldHost?.processManager;
                 if (pm == null) return;
+                string name = string.IsNullOrWhiteSpace(latestTarget) ? "Rain Meadow.dll" : latestTarget;
                 pm.ShowDialog(new DialogNotify(
-                    "新版本已下载完成。\n\n请退出并重新启动游戏，更新会在启动时自动应用。",
+                    "新版本已下载完成：" + name + "\n\n请退出并重新启动游戏，更新会在启动时自动应用。",
                     pm, () => { }));
             }
             catch (Exception e)

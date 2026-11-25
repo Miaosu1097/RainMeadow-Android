@@ -1,6 +1,7 @@
 {
-  "latest": "0.1.16.3",
-  "force": false,
-  "notes": "",
-  "download": ""
+  "latest": "0.1.17.0",
+  "force": true,
+  "notes": "【测试公告】\n本版本用于验证自动更新与文件替换机制。\n\n- 点击确定后将下载测试文件\n- 重启游戏后文件会被替换\n- 请查看 RainMeadow/plugins/testpatch.txt",
+  "download": "https://raw.githubusercontent.com/Miaosu1097/RainMeadow-Android/main/test/testpatch.txt",
+  "target": "testpatch.txt"
 }
