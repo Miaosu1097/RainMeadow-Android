@@ -321,7 +321,8 @@ public class LobbySelectMenu : SmartMenu
         statisticsLabel.text = Translate("Requesting Steam lobbies...");
         try
         {
-            var rooms = await session.GetRoomsAsync(RainMeadow.MeadowVersionStr, steamMenuLifetime.Token);
+            var rooms = await session.GetRoomsAsync(RainMeadow.MeadowVersionStr, steamMenuLifetime.Token,
+                SteamMatchmakingManager.IsTrustedSteamAccount);
             if (!IsCurrentSteamView(session))
                 return;
             LobbyInfo[] lobbies = rooms.Select(room => (LobbyInfo)new ManagedSteamLobbyInfo(room)).ToArray();

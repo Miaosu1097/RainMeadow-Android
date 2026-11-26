@@ -116,7 +116,8 @@ internal sealed class ManagedSteamGameplay : MatchmakingManager
     {
         try
         {
-            var rooms = await Session.GetRoomsAsync(RainMeadow.MeadowVersionStr, CancellationToken.None);
+            var rooms = await Session.GetRoomsAsync(RainMeadow.MeadowVersionStr, CancellationToken.None,
+                SteamMatchmakingManager.IsTrustedSteamAccount);
             if (ReferenceEquals(active, this) && currentDomain == domain)
                 OnLobbyListReceivedEvent(true, rooms.Select(r => (LobbyInfo)new ManagedSteamLobbyInfo(r)).ToArray());
         }

@@ -320,7 +320,8 @@ namespace RainMeadow
             return SteamLobbyProbe.WaitForReply(job.ToTask(), "Steam networking certificate request", token);
         }
 
-        internal async Task<SteamLobbySummary[]> GetRoomsAsync(string version, CancellationToken token)
+        internal async Task<SteamLobbySummary[]> GetRoomsAsync(string version, CancellationToken token,
+            Func<ulong, bool>? isTrustedOwner = null)
         {
             token.ThrowIfCancellationRequested();
             if (!IsConnected)
@@ -342,17 +343,19 @@ namespace RainMeadow
             using var pinLookup = CancellationTokenSource.CreateLinkedTokenSource(token);
             pinLookup.CancelAfter(TimeSpan.FromSeconds(5));
             using var pinLookupSlots = new SemaphoreSlim(8);
-            var rooms = await Task.WhenAll(list.Lobbies.Select(room => SummarizeRoomAsync(room, pinLookupSlots, pinLookup.Token)))
+            var rooms = await Task.WhenAll(list.Lobbies.Select(room =>
+                    SummarizeRoomAsync(room, isTrustedOwner, pinLookupSlots, pinLookup.Token)))
                 .ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
             return rooms;
         }
 
-        private async Task<SteamLobbySummary> SummarizeRoomAsync(SteamMatchmaking.Lobby room, SemaphoreSlim pinLookupSlots, CancellationToken token)
+        private async Task<SteamLobbySummary> SummarizeRoomAsync(SteamMatchmaking.Lobby room, Func<ulong, bool>? isTrustedOwner,
+            SemaphoreSlim pinLookupSlots, CancellationToken token)
         {
             ulong lobbyId = room.SteamID.ConvertToUInt64();
             var summary = new SteamLobbySummary(lobbyId, room.Metadata, room.NumMembers, room.MaxMembers);
-            if (!room.Metadata.TryGetValue(MatchmakingManager.PINNED_KEY, out var pinValue)
+            if (isTrustedOwner == null || !room.Metadata.TryGetValue(SteamLobbySummary.PinnedKey, out var pinValue)
                 || !bool.TryParse(pinValue, out bool pinRequested) || !pinRequested) return summary;
 
             // Steam's list response can omit the owner or carry a cached owner. Confirm both fields.
@@ -367,7 +370,7 @@ namespace RainMeadow
                         .ConfigureAwait(false)).Lobby;
                     if (details == null || details.SteamID.ConvertToUInt64() != lobbyId) return summary;
                     bool trustedOwner = details.OwnerSteamID is SteamID owner
-                        && SteamMatchmakingManager.IsTrustedSteamAccount(owner.ConvertToUInt64());
+                        && isTrustedOwner(owner.ConvertToUInt64());
                     return new SteamLobbySummary(lobbyId, details.Metadata, details.NumMembers, details.MaxMembers, trustedOwner);
                 }
                 finally
@@ -642,6 +645,7 @@ namespace RainMeadow
 
     internal readonly struct SteamLobbySummary
     {
+        internal const string PinnedKey = "pinned";
         internal readonly ulong Id;
         internal readonly string Name;
         internal readonly string Mode;
@@ -666,7 +670,7 @@ namespace RainMeadow
             BannedMods = Read(metadata, "banned_mods");
             Campaign = ReadLabel(metadata, "campaign", "");
             WhitelistMods = Read(metadata, "whitelistmods");
-            Pinned = trustedOwner && ReadBoolean(metadata, MatchmakingManager.PINNED_KEY);
+            Pinned = trustedOwner && ReadBoolean(metadata, PinnedKey);
         }
 
         private static string Read(IReadOnlyDictionary<string, string> metadata, string key)
