@@ -587,7 +587,33 @@ namespace RainMeadow
                     yield break;
                 }
 
-                if (hasNotice) WriteState("notice", noticeVersion);
+                if (hasNotice)
+                {
+                    // 公告带了图片但一张都没下下来（网络差 / 代理超时）时，本次不记已读，
+                    // 下次启动会重试；连续失败 3 次后放行，避免网络长期不通导致公告永远弹。
+                    bool imgWanted = noticeImages.Count > 0;
+                    bool imgGot = textures.Count > 0;
+                    if (!imgWanted || imgGot)
+                    {
+                        WriteState("notice", noticeVersion);
+                        WriteState("notice_img_fail", "0");
+                    }
+                    else
+                    {
+                        int fails;
+                        int.TryParse(ReadState("notice_img_fail"), out fails);
+                        fails++;
+                        WriteState("notice_img_fail", fails.ToString());
+                        UnityEngine.Debug.LogWarning("[AndroidExtras] notice image missing, NOT marked read (fail="
+                                                     + fails + "/3)");
+                        if (fails >= 3)
+                        {
+                            WriteState("notice", noticeVersion);
+                            WriteState("notice_img_fail", "0");
+                            UnityEngine.Debug.LogWarning("[AndroidExtras] notice image retry exhausted, marked read without image");
+                        }
+                    }
+                }
                 if (hasRelease && !relForce) WriteState("release", relLatest);
                 UnityEngine.Debug.Log("[AndroidExtras] notice marked read (with images): " + noticeVersion);
             }
