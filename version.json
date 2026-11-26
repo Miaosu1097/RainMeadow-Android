@@ -1,10 +1,10 @@
 {
   "notice": {
-    "version": "2",
-    "title": "联机服务组件上线",
-    "updated": "2026-11-26 15:30",
+    "version": "3",
+    "title": "联机服务组件 v1.1 上线",
+    "updated": "2026-11-26 09:30",
     "fps": 8,
-    "message": "这是 **公告系统测试**，验证富文本、图片与自定义按钮。\n\n【颜色测试】[red]潮生造物[/red]  [orange]MISTAKE[/orange]  [yellow]雯铃[/yellow]\n[green]沧浔[/green]  [cyan]火烛[/cyan]  [blue]MM256MIAO[/blue]\n[purple]GststmkrLJX[/purple]  [magenta]ClearSimple[/magenta]  [pink]wuwa[/pink]\n[#FFD966]星河远岸[/#FFD966]  [#9FE3FF]super sandy[/#9FE3FF]  [#C9A0FF]54Egg[/#C9A0FF]\n\n【字号】[big]这段应该明显更大[/big]，后面恢复。\n\n【粗体】**这段是粗体**，这段常规。\n\n【混合】[red]**红色粗体**[/red] 与 [big][cyan]放大青色[/cyan][/big]。\n\n【换行】下面是一段较长的说明文字，用来验证自动换行是否正常：当内容较长时应当自动折行，不会溢出弹窗边框；若超出可用高度，末尾显示省略号并停止渲染。\n\n【按钮】右下角三个按钮，点击应打开手机浏览器。",
+    "message": "这是**内建版公告系统**的首次测试，验证标题自适应、富文本、按钮与排版。\n\n【颜色】[red]潮生造物[/red]  [orange]MISTAKE[/orange]  [yellow]雯铃[/yellow]\n[green]沧浔[/green]  [cyan]火烛[/cyan]  [blue]MM256MIAO[/blue]\n[purple]GststmkrLJX[/purple]  [magenta]ClearSimple[/magenta]  [pink]wuwa[/pink]\n[#FFD966]星河远岸[/#FFD966]  [#9FE3FF]super sandy[/#9FE3FF]  [#C9A0FF]54Egg[/#C9A0FF]\n\n【字号】[big]这段应该明显更大[/big]，后面恢复正常。\n\n【粗体】**这段是粗体**，这段是常规。\n\n【混合】[red]**红色粗体**[/red] 与 [big][cyan]放大青色[/cyan][/big]。\n\n【换行】下面是一段较长的说明文字，用来验证自动换行：当内容较长时应当自动折行，不会溢出弹窗边框；若超出可用高度，末尾显示省略号并停止渲染。\n\n【按钮】右下角三个按钮，点击应打开手机浏览器，且不关闭弹窗。",
     "buttons": [
       {
         "text": "项目主页",

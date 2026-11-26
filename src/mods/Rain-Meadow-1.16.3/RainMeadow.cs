@@ -32,12 +32,16 @@ namespace RainMeadow
         {
             try
             {
+                // 移植端扩展：先应用上次下载好的更新（必须在资源加载前）
+                AndroidExtras.ApplyPendingUpdate();
+
                 instance = this;
                 rainMeadowOptions = new RainMeadowOptions(this);
 
                 Utils.WaitForPreviousInstance();
 
                 On.RainWorld.OnModsInit += RainWorld_OnModsInit;
+                On.RainWorld.OnModsInit += AndroidExtras.OnModsInit;
                 On.ModManager.RefreshModsLists += ModManagerOnRefreshModsLists;
                 On.RainWorld.Update += RainWorld_Update;
                 On.WorldLoader.UpdateThread += WorldLoader_UpdateThread;
