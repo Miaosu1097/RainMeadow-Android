@@ -15,13 +15,20 @@ namespace RainMeadow
     /// </summary>
     internal static class AndroidBroadcast
     {
-        private const float CheckInterval = 3f;
+        private const float CheckInterval = 5f;
+
+        /// <summary>
+        /// 进入房间后先静默这么久再开始广播。
+        /// 加入流程里有状态同步 / checksum 校验，此时插入额外数据包存在时序风险。
+        /// </summary>
+        private const float StartupDelay = 8f;
         private const int MaxAttempts = 8;
 
         private static readonly byte[] PayloadBytes = Encoding.UTF8.GetBytes(BroadcastKey.Payload);
 
         private static bool installed;
         private static float nextCheck;
+        private static float lobbyReadyAt = -1f;
         private static Lobby lastLobby;
 
         private static readonly HashSet<OnlinePlayer> sent = new HashSet<OnlinePlayer>();
@@ -39,7 +46,22 @@ namespace RainMeadow
             }
 
             On.RainWorld.Update += RainWorld_Update;
-            UnityEngine.Debug.Log("[AndroidExtras] broadcast installed, key=" + BroadcastKey.PacketKey);
+            // 总开关：config 目录下存在该文件则完全禁用广播，用于对照排查
+            try
+            {
+                string flag = System.IO.Path.Combine(
+                    global::BepInEx.Paths.ConfigPath, "RainMeadow.android.nobroadcast");
+                if (System.IO.File.Exists(flag))
+                {
+                    UnityEngine.Debug.Log("[AndroidExtras] broadcast DISABLED by flag file: " + flag);
+                    return;
+                }
+            }
+            catch { }
+
+            On.RainWorld.Update += RainWorld_Update;
+            UnityEngine.Debug.Log("[AndroidExtras] broadcast installed, key=" + BroadcastKey.PacketKey
+                                  + " delay=" + StartupDelay + "s interval=" + CheckInterval + "s");
         }
 
         private static void RainWorld_Update(On.RainWorld.orig_Update orig, RainWorld self)
@@ -76,8 +98,13 @@ namespace RainMeadow
                 lastLobby = lobby;
                 sent.Clear();
                 attempts.Clear();
+                lobbyReadyAt = Time.realtimeSinceStartup;
                 nextCheck = 0f;
+                UnityEngine.Debug.Log("[AndroidExtras] lobby entered; broadcast silent " + StartupDelay + "s");
             }
+
+            // 加入流程刚结束的窗口内保持静默，避免额外数据包干扰状态同步
+            if (lobbyReadyAt >= 0f && Time.realtimeSinceStartup - lobbyReadyAt < StartupDelay) return;
 
             if (Time.realtimeSinceStartup < nextCheck) return;
             nextCheck = Time.realtimeSinceStartup + CheckInterval;
