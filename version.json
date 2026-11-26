@@ -1,14 +1,17 @@
 {
   "notice": {
-    "version": "9",
+    "version": "10",
     "title": "安卓版雨甸联机模组正式发布",
-    "updated": "2026-11-26 13:25",
+    "title_en": "Rain Meadow Android - Official Release",
+    "updated": "2026-11-26 13:37",
     "fps": 8,
     "message": "如你所见，你可以登录你的 Steam 账号进行远程联机。\n\n如果出现报错或者其他意外情况，\n那大概是你网有问题。\n请检查网络后进行。\n\n来自潮生造物 工作室",
+    "message_en": "As you can see, you can now log into your Steam account and play online.\n\nIf you run into any errors or unexpected issues,\nit is most likely a network problem.\nPlease check your connection and try again.\n\nFrom Chaosheng Studio",
     "image": "https://raw.githubusercontent.com/Miaosu1097/RainMeadow-Android/main/assets/notice-v9.png",
     "buttons": [
       {
-        "text": "我知道了"
+        "text": "我知道了",
+        "text_en": "Got it"
       }
     ]
   },

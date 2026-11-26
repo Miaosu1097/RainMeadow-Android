@@ -326,6 +326,40 @@ namespace RainMeadow
                       + " noticeVersion=" + (hasNotice ? noticeVersion : "-"));
         }
 
+        /// <summary>
+        /// 游戏内语言是否应当使用英文文案。
+        /// 雨世界的官方中文枚举是 TraditionalChinese（简体mod只换文本、不改枚举），
+        /// 因此只要不是 TraditionalChinese 就一律走英文。
+        /// </summary>
+        private static bool PreferEnglish()
+        {
+            try
+            {
+                var rw = RWCustom.Custom.rainWorld;
+                if (rw != null && rw.options != null)
+                {
+                    return rw.options.language != InGameTranslator.LanguageID.TraditionalChinese;
+                }
+            }
+            catch
+            {
+                // 取不到语言时按中文处理（本项目主要用户群）
+            }
+            return false;
+        }
+
+        /// <summary>按语言取字段：英文环境优先用 keyEn，缺失则回退到 key。</summary>
+        private static string PickLang(JToken o, string key, string keyEn, bool en)
+        {
+            if (o == null) return null;
+            if (en)
+            {
+                var v = o.Value<string>(keyEn);
+                if (!string.IsNullOrWhiteSpace(v)) return v;
+            }
+            return o.Value<string>(key);
+        }
+
         private static void ParseNotice(JObject o)
         {
             if (o == null) return;
@@ -334,12 +368,12 @@ namespace RainMeadow
             if (string.IsNullOrWhiteSpace(v)) return;
             if (ReadState("notice") == v) return;
 
+            bool en = PreferEnglish();
             noticeVersion = v;
-            noticeTitle = o.Value<string>("title") ?? "公告";
-            noticeMessage = o.Value<string>("message") ?? "";
-
+            noticeTitle = PickLang(o, "title", "title_en", en) ?? (en ? "Notice" : "公告");
+            noticeMessage = PickLang(o, "message", "message_en", en) ?? "";
             string updated = o.Value<string>("updated") ?? "";
-            noticeSubtitle = "公告 #" + v + (string.IsNullOrEmpty(updated) ? "" : "    " + updated);
+            noticeSubtitle = (en ? "Notice #" : "公告 #") + v + (string.IsNullOrEmpty(updated) ? "" : "    " + updated);
 
             noticeButtons.Clear();
             var arr = o.Value<JArray>("buttons");
@@ -350,7 +384,7 @@ namespace RainMeadow
                     if (b == null) continue;
                     noticeButtons.Add(new AnnoncementDialog.ButtonSpec
                     {
-                        text = b.Value<string>("text") ?? "链接",
+                        text = PickLang(b, "text", "text_en", en) ?? (en ? "Link" : "链接"),
                         url = b.Value<string>("url"),
                     });
                 }
@@ -458,15 +492,19 @@ namespace RainMeadow
             {
                 var pm = self.processManager;
                 if (pm == null) return;
-
-                string body =
-                    "无法连接到更新服务器。\n\n" +
-                    "可能原因：\n" +
-                    "· 设备当前未联网\n" +
-                    "· 网络受限（校园网、部分地区域名屏蔽）\n\n" +
-                    "点击「取消」可以直接开始游戏，不影响正常游玩。\n" +
-                    "网络恢复后会自动重新检查。";
-
+                string body = PreferEnglish()
+                    ? "Could not reach the update server.\n\n" +
+                      "Possible causes:\n" +
+                      "· Device is offline\n" +
+                      "· Network restricted (campus / ISP / blocked domains)\n\n" +
+                      "Tap Cancel to start the game as usual.\n" +
+                      "It will re-check automatically once the network is back."
+                    : "无法连接到更新服务器。\n\n" +
+                      "可能原因：\n" +
+                      "· 设备当前未联网\n" +
+                      "· 网络受限（校园网、部分地区域名屏蔽）\n\n" +
+                      "点击「取消」可以直接开始游戏，不影响正常游玩。\n" +
+                      "网络恢复后会自动重新检查。";
                 pm.ShowDialog(new DialogNotify(body, NoticeSize, pm, () => { }));
             }
             catch (Exception e)
@@ -490,6 +528,7 @@ namespace RainMeadow
                 string subtitle;
                 string body;
                 var buttons = new List<AnnoncementDialog.ButtonSpec>();
+                bool en = PreferEnglish();
 
                 if (hasNotice)
                 {
@@ -500,8 +539,8 @@ namespace RainMeadow
                 }
                 else
                 {
-                    title = string.IsNullOrEmpty(relTitle) ? ("新版本 " + relLatest) : relTitle;
-                    subtitle = "版本 " + relLatest + "    " + DateTime.Now.ToString("yyyy-MM-dd HH:mm");
+                    title = string.IsNullOrEmpty(relTitle) ? ((en ? "New version " : "新版本 ") + relLatest) : relTitle;
+                    subtitle = (en ? "Version " : "版本 ") + relLatest + "    " + DateTime.Now.ToString("yyyy-MM-dd HH:mm");
                     body = relNotes;
                 }
 
@@ -509,14 +548,15 @@ namespace RainMeadow
                 {
                     buttons.Add(new AnnoncementDialog.ButtonSpec
                     {
-                        text = relForce ? "立即更新" : "更新",
+                        text = relForce ? (en ? "Update now" : "立即更新") : (en ? "Update" : "更新"),
                         isUpdate = true,
                     });
                 }
 
-                buttons.Add(new AnnoncementDialog.ButtonSpec { text = "关闭" });
+                buttons.Add(new AnnoncementDialog.ButtonSpec { text = PreferEnglish() ? "Close" : "关闭" });
 
-                string versionLine = "雨甸 " + global::RainMeadow.RainMeadow.MeadowVersionStr;
+                string versionLine = (PreferEnglish() ? "Rain Meadow " : "雨甸 ")
+                                            + global::RainMeadow.RainMeadow.MeadowVersionStr;
 
                 UnityEngine.Debug.Log("[AndroidExtras] show dialog: hasNotice=" + hasNotice
                                       + " hasRelease=" + hasRelease
@@ -723,9 +763,14 @@ namespace RainMeadow
                 var pm = host?.processManager;
                 if (pm == null) return;
 
-                string body = "已下载 " + ok + " 个文件";
-                if (fail > 0) body += "，" + fail + " 个失败";
-                body += "。\n\n请完全退出并重新启动游戏，更新会在启动时自动应用。";
+                bool en = PreferEnglish();
+                string body = en
+                    ? "Downloaded " + ok + " file(s)"
+                    : "已下载 " + ok + " 个文件";
+                if (fail > 0) body += en ? (", " + fail + " failed") : ("，" + fail + " 个失败");
+                body += en
+                    ? ".\n\nPlease fully quit and restart the game; the update is applied on next launch."
+                    : "。\n\n请完全退出并重新启动游戏，更新会在启动时自动应用。";
 
                 pm.ShowDialog(new DialogNotify(body, NoticeSize, pm, () => { }));
             }
