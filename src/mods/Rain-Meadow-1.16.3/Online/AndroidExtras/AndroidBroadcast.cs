@@ -8,21 +8,26 @@ using UnityEngine.Networking;
 namespace RainMeadow
 {
     /// <summary>
-    /// 移植端平台标识广播。
+    /// 移植端（安卓）平台标识广播。
+    ///
     /// 通过 Rain Meadow 内置的 CustomManager（CustomPacket）上报，按字符串 key 路由，
     /// 与程序集版本无关；未订阅该 key 的客户端会静默丢弃，不会报错。
+    ///
+    /// 行为：进入房间后静默 3 秒，此后每 5 秒向房间内每个对端发一次极小的标识包。
+    /// 对端的反制模组自行去重（同房间内同一玩家只播报一次，离开再进会重新播报）。
+    ///
     /// 桌面端不注册任何 hook。
     /// </summary>
     internal static class AndroidBroadcast
     {
+        /// <summary>广播周期：静默期结束后，每隔这么久向房间内所有对端发一次。</summary>
         private const float CheckInterval = 5f;
 
         /// <summary>
         /// 进入房间后先静默这么久再开始广播。
         /// 加入流程里有状态同步 / checksum 校验，此时插入额外数据包存在时序风险。
         /// </summary>
-        private const float StartupDelay = 8f;
-        private const int MaxAttempts = 8;
+        private const float StartupDelay = 3f;
 
         private static readonly byte[] PayloadBytes = Encoding.UTF8.GetBytes(BroadcastKey.Payload);
 
@@ -31,8 +36,8 @@ namespace RainMeadow
         private static float lobbyReadyAt = -1f;
         private static Lobby lastLobby;
 
-        private static readonly HashSet<OnlinePlayer> sent = new HashSet<OnlinePlayer>();
-        private static readonly Dictionary<OnlinePlayer, int> attempts = new Dictionary<OnlinePlayer, int>();
+        // 仅用于日志：首次成功发给某个对端时单独记录一条，之后只打每轮汇总
+        private static readonly HashSet<OnlinePlayer> firstSent = new HashSet<OnlinePlayer>();
 
         internal static void Install()
         {
@@ -46,20 +51,7 @@ namespace RainMeadow
             }
 
             On.RainWorld.Update += RainWorld_Update;
-            // 总开关：config 目录下存在该文件则完全禁用广播，用于对照排查
-            try
-            {
-                string flag = System.IO.Path.Combine(
-                    global::BepInEx.Paths.ConfigPath, "RainMeadow.android.nobroadcast");
-                if (System.IO.File.Exists(flag))
-                {
-                    UnityEngine.Debug.Log("[AndroidExtras] broadcast DISABLED by flag file: " + flag);
-                    return;
-                }
-            }
-            catch { }
 
-            On.RainWorld.Update += RainWorld_Update;
             UnityEngine.Debug.Log("[AndroidExtras] broadcast installed, key=" + BroadcastKey.PacketKey
                                   + " delay=" + StartupDelay + "s interval=" + CheckInterval + "s");
         }
@@ -87,8 +79,9 @@ namespace RainMeadow
                 if (lastLobby != null)
                 {
                     lastLobby = null;
-                    sent.Clear();
-                    attempts.Clear();
+                    firstSent.Clear();
+                    lobbyReadyAt = -1f;
+                    nextCheck = 0f;
                 }
                 return;
             }
@@ -96,8 +89,7 @@ namespace RainMeadow
             if (!ReferenceEquals(lastLobby, lobby))
             {
                 lastLobby = lobby;
-                sent.Clear();
-                attempts.Clear();
+                firstSent.Clear();
                 lobbyReadyAt = Time.realtimeSinceStartup;
                 nextCheck = 0f;
                 UnityEngine.Debug.Log("[AndroidExtras] lobby entered; broadcast silent " + StartupDelay + "s");
@@ -109,40 +101,37 @@ namespace RainMeadow
             if (Time.realtimeSinceStartup < nextCheck) return;
             nextCheck = Time.realtimeSinceStartup + CheckInterval;
 
-            // 清理已离开的对端
-            sent.RemoveWhere(p => p == null || p.hasLeft || !lobby.participants.Contains(p));
+            firstSent.RemoveWhere(p => p == null || p.hasLeft || !lobby.participants.Contains(p));
 
-            List<OnlinePlayer> stale = null;
-            foreach (var key in attempts.Keys)
-            {
-                if (key == null || key.hasLeft || !lobby.participants.Contains(key))
-                {
-                    if (stale == null) stale = new List<OnlinePlayer>();
-                    stale.Add(key);
-                }
-            }
-            if (stale != null)
-            {
-                foreach (var key in stale) attempts.Remove(key);
-            }
+            int sentNow = 0;
+            int newPeers = 0;
 
             foreach (var player in lobby.participants)
             {
                 if (player == null || player.isMe || player.hasLeft) continue;
-                if (sent.Contains(player)) continue;
 
-                attempts.TryGetValue(player, out int tries);
-                if (tries >= MaxAttempts) continue;
-                attempts[player] = tries + 1;
+                if (!TrySend(lobby, player)) continue;
 
-                if (TrySend(lobby, player)) sent.Add(player);
+                sentNow++;
+                if (firstSent.Add(player))
+                {
+                    newPeers++;
+                    UnityEngine.Debug.Log("[AndroidExtras] broadcast first sent to " + player);
+                }
+            }
+
+            // 每轮只打一条汇总，避免 5 秒一次 × 人数 把日志刷爆
+            if (sentNow > 0)
+            {
+                UnityEngine.Debug.Log("[AndroidExtras] broadcast round: sent=" + sentNow
+                                      + " new=" + newPeers + " peers=" + lobby.participants.Count);
             }
         }
 
         /// <summary>
         /// 向单个对端发送。
-        /// Rain Meadow 的 OnlineManager.SendCustomData 在对端尚未同步该 key 时会静默 return，
-        /// 因此先本地检查，避免白白消耗重试次数。
+        /// 对端尚未同步该 key（没装反制模组 / 握手还没完成）时返回 false，
+        /// 下个周期自动重试——这一步是纯本地字典查询，不产生任何网络流量。
         /// </summary>
         private static bool TrySend(Lobby lobby, OnlinePlayer player)
         {
@@ -155,7 +144,6 @@ namespace RainMeadow
 
             CustomManager.SendCustomData(player, BroadcastKey.PacketKey, PayloadBytes,
                 (ushort)PayloadBytes.Length, NetIO.SendType.Reliable);
-            UnityEngine.Debug.Log("[AndroidExtras] broadcast sent to " + player);
             return true;
         }
     }

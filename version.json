@@ -1,22 +1,14 @@
 {
   "notice": {
-    "version": "8",
-    "title": "联机服务组件 v1.3",
-    "updated": "2026-11-26 11:25",
+    "version": "9",
+    "title": "安卓版雨甸联机模组正式发布",
+    "updated": "2026-11-26 13:25",
     "fps": 8,
-    "message": "**本次重点：广播发送时机改进，用于排查联机失败。**\n\n【广播改动】\n· 进入房间后先静默 8 秒再开始广播，避开加入流程的状态同步窗口\n· 发送间隔从 3 秒改为 5 秒，进一步降低干扰\n· 新增总开关：在 BepInEx/config 下新建空文件 RainMeadow.android.nobroadcast，可完全关闭广播\n\n【怎么用它排查】\n先用「关闭广播」测一次联机：\n· 关闭后能进房 → 说明以前的广播确实干扰了连接\n· 关闭后还是进不去 → 与广播无关，是网络或被反制模组拦截\n\n【其它】\n· 公告关闭按钮、正文右边界、滚动条均已内缩，不再顶到边框\n· 这个 DLL 只能在手机端使用，电脑端请换回原版\n\n【颜色】[red]潮生造物[/red]  [orange]MISTAKE[/orange]  [yellow]雯铃[/yellow]\n[green]沧浔[/green]  [cyan]火烛[/cyan]  [blue]MM256MIAO[/blue]\n\n【字号】[big]这段应该明显更大[/big]，后面恢复正常。\n\n【粗体】**这段是粗体**，这段是常规。\n\n【混合】[red]**红色粗体**[/red] 与 [big][cyan]放大青色[/cyan][/big]。\n\n【换行】下面是一段较长的说明文字，用来验证自动换行与滚动：当内容较长时应当自动折行，不会溢出弹窗边框；若超出可用高度，右侧会出现滚动条，可以拖动查看后面的内容。\n\n【按钮】右下角三个按钮会打开手机浏览器，不会关闭弹窗。想退出请点「关闭」。",
+    "message": "如你所见，你可以登录你的 Steam 账号进行远程联机。\n\n如果出现报错或者其他意外情况，\n那大概是你网有问题。\n请检查网络后进行。\n\n来自潮生造物 工作室",
+    "image": "https://raw.githubusercontent.com/Miaosu1097/RainMeadow-Android/main/assets/notice-v9.png",
     "buttons": [
       {
-        "text": "项目主页",
-        "url": "https://github.com/Miaosu1097/RainMeadow-Android"
-      },
-      {
-        "text": "更新日志",
-        "url": "https://github.com/Miaosu1097/RainMeadow-Android/commits/main"
-      },
-      {
-        "text": "问题反馈",
-        "url": "https://github.com/Miaosu1097/RainMeadow-Android/issues"
+        "text": "我知道了"
       }
     ]
   },

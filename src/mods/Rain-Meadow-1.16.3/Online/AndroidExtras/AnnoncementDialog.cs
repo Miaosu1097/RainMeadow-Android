@@ -259,7 +259,7 @@ namespace RainMeadow
             if (string.IsNullOrEmpty(bodyRich)) { contentH = 0f; return; }
 
             var segments = RichText.Parse(bodyRich);
-            float right = pos.x + size.x - PadX;
+            float right = pos.x + size.x - PadX - 12f;
 
             float cursorX = left;
             float cursorY = top;
@@ -411,7 +411,7 @@ namespace RainMeadow
 
         private void PlaceScrollbar()
         {
-            float x = pos.x + size.x - 12f;
+            float x = pos.x + size.x - 22f;
             float mid = (bodyTop + bodyBottom) / 2f;
             float trackH = bodyTop - bodyBottom;
             if (trackH <= 0f) return;
@@ -560,7 +560,7 @@ namespace RainMeadow
             }
 
             // 从右往左排
-            float x = pos.x + size.x - PadX;
+            float x = pos.x + size.x - PadX - 16f;
             float y = pos.y + PadY + ButtonH / 2f;
 
             for (int i = buttons.Count - 1; i >= 0; i--)
