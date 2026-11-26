@@ -1,4 +1,12 @@
-# Rain Meadow Android 构建
+<div align="center">
+
+# 构建与持续集成
+
+**从源码到可安装的模组包。**
+
+</div>
+
+---
 
 Git 主仓库保存源码、文本资源、脚本和输入版本记录。构建时取得的 DLL、音频、图片、AssetBundle 和原生库进入 Git 忽略的 `libs/`、`work/` 或 `.cache/`，安装包写到 `release/`。Action 在拉取外部输入前检查 Git 跟踪的文件。
 
