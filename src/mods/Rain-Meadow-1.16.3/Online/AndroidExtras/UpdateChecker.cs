@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using BepInEx;
 using Menu;
 using Newtonsoft.Json.Linq;
@@ -37,6 +38,7 @@ namespace RainMeadow
         private static readonly string[] VersionUrls =
         {
             "https://gh-proxy.com/https://raw.githubusercontent.com/Miaosu1097/RainMeadow-Android/main/version.json",
+            "https://api.github.com/repos/Miaosu1097/RainMeadow-Android/contents/version.json",
             "https://raw.githubusercontent.com/Miaosu1097/RainMeadow-Android/main/version.json",
             "https://cdn.jsdelivr.net/gh/Miaosu1097/RainMeadow-Android@main/version.json",
             "https://ghfast.top/https://raw.githubusercontent.com/Miaosu1097/RainMeadow-Android/main/version.json",
@@ -267,7 +269,7 @@ namespace RainMeadow
 
                 using (var req = UnityWebRequest.Get(url))
                 {
-                    req.timeout = 6;
+                    req.timeout = 15;
                     yield return req.SendWebRequest();
                     if (req.result == UnityWebRequest.Result.Success)
                         body = req.downloadHandler.text;
@@ -281,6 +283,21 @@ namespace RainMeadow
                 try
                 {
                     root = JObject.Parse(body);
+
+                    // GitHub Contents API 返回的是 {"content": "<base64>", ...} 包装，
+                    // 需要解出真正的 version.json 内容。
+                    if (url.IndexOf("api.github.com", StringComparison.Ordinal) >= 0)
+                    {
+                        var contentToken = root["content"];
+                        if (contentToken != null)
+                        {
+                            string b64 = contentToken.ToString()
+                                .Replace("\n", "").Replace("\r", "");
+                            byte[] raw = Convert.FromBase64String(b64);
+                            root = JObject.Parse(Encoding.UTF8.GetString(raw));
+                        }
+                    }
+
                     usedUrl = url;
                     UnityEngine.Debug.Log("[AndroidExtras] source " + (i + 1) + "/" + VersionUrls.Length + " OK: " + url);
                     break;
