@@ -123,7 +123,12 @@ namespace RainMeadow
 
         // ============ 构建 ============
 
-        internal void Build()
+        /// <summary>
+        /// 构建所有控件。
+        /// 返回 false 表示构建过程中抛了异常——调用方不应把公告标记为已读，
+        /// 否则玩家会永远看不到这条公告。
+        /// </summary>
+        internal bool Build()
         {
             try
             {
@@ -152,10 +157,16 @@ namespace RainMeadow
                 PlaceButtons();
                 PlaceScrollbar();
                 ApplyScroll(0f);
+
+                UnityEngine.Debug.Log("[AndroidExtras] dialog built: pieces=" + pieces.Count
+                                      + " contentH=" + contentH + " viewH=" + viewH
+                                      + " maxScroll=" + maxScroll);
+                return true;
             }
             catch (Exception e)
             {
                 UnityEngine.Debug.LogError("[AndroidExtras] dialog build error: " + e);
+                return false;
             }
         }
 

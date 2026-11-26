@@ -480,7 +480,11 @@ namespace RainMeadow
             try
             {
                 var pm = self.processManager;
-                if (pm == null) return;
+                if (pm == null)
+                {
+                    UnityEngine.Debug.LogError("[AndroidExtras] no ProcessManager, dialog skipped");
+                    return;
+                }
 
                 string title;
                 string subtitle;
@@ -514,20 +518,30 @@ namespace RainMeadow
 
                 string versionLine = "雨甸 " + global::RainMeadow.RainMeadow.MeadowVersionStr;
 
-                // 有图片时先异步下载，加载完再弹
+                UnityEngine.Debug.Log("[AndroidExtras] show dialog: hasNotice=" + hasNotice
+                                      + " hasRelease=" + hasRelease
+                                      + " buttons=" + buttons.Count
+                                      + " images=" + noticeImages.Count);
+
+                // 有图片时先异步下载，加载完再弹（状态由图片流程在成功后再写）
                 if (noticeImages.Count > 0 && host != null && hasNotice)
                 {
                     host.StartCoroutine(DownloadImagesThenShow(pm, title, subtitle, body, versionLine, buttons));
+                    return;
                 }
-                else
+
+                var dlg = new AnnoncementDialog(pm, title, subtitle, body, versionLine, buttons, BeginDownload);
+                pm.ShowDialog(dlg);
+
+                if (!dlg.Build())
                 {
-                    var dlg = new AnnoncementDialog(pm, title, subtitle, body, versionLine, buttons, BeginDownload);
-                    pm.ShowDialog(dlg);
-                    dlg.Build();
+                    UnityEngine.Debug.LogError("[AndroidExtras] dialog build failed; notice NOT marked as read");
+                    return;
                 }
 
                 if (hasNotice) WriteState("notice", noticeVersion);
                 if (hasRelease && !relForce) WriteState("release", relLatest);
+                UnityEngine.Debug.Log("[AndroidExtras] notice marked read: " + noticeVersion);
             }
             catch (Exception e)
             {
@@ -566,11 +580,20 @@ namespace RainMeadow
                 var dlg = new AnnoncementDialog(pm, title, subtitle, body, versionLine,
                                                 buttons, BeginDownload, textures, noticeFps);
                 pm.ShowDialog(dlg);
-                dlg.Build();
+
+                if (!dlg.Build())
+                {
+                    UnityEngine.Debug.LogError("[AndroidExtras] image dialog build failed; notice NOT marked as read");
+                    yield break;
+                }
+
+                if (hasNotice) WriteState("notice", noticeVersion);
+                if (hasRelease && !relForce) WriteState("release", relLatest);
+                UnityEngine.Debug.Log("[AndroidExtras] notice marked read (with images): " + noticeVersion);
             }
             catch (Exception e)
             {
-                UnityEngine.Debug.LogError("[AndroidExtras] image dialog failed: " + e.Message);
+                UnityEngine.Debug.LogError("[AndroidExtras] image dialog failed: " + e);
             }
         }
 
