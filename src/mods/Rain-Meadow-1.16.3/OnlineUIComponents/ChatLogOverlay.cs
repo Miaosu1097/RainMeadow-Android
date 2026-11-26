@@ -194,7 +194,9 @@ namespace RainMeadow
                 {
                     ChatLogManager.SystemMessageType? systemMessageType = ChatLogManager.SysMesSignatureToType(username);
                     bool isSystemMessage = systemMessageType is not null;
-                    List<string> splitMessages = [.. MenuHelpers.SmartSplitIntoFixedStrings($"{message}", desiredXWidth - (isSystemMessage ? 0 : LabelTest.GetWidth($"{username}: ", false)), 1, out string remainingMessage)];
+                    var displayMessage = message;
+                    if (!isSystemMessage) MatchmakingManager.currentInstance.FilterMessage(ref displayMessage);
+                    List<string> splitMessages = [.. MenuHelpers.SmartSplitIntoFixedStrings(displayMessage, desiredXWidth - (isSystemMessage ? 0 : LabelTest.GetWidth($"{username}: ", false)), 1, out string remainingMessage)];
                     splitMessages.AddRange(MenuHelpers.SmartSplitIntoStrings(remainingMessage, desiredXWidth));
                     for (int i = 0; i < splitMessages.Count; i++)
                     {

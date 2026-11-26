@@ -197,6 +197,8 @@ namespace RainMeadow
             return subscribers.FirstOrDefault(p => !p.hasLeft && OnlineManager.lobby.gameMode.PlayerCanOwnResource(p, onlineResource));
         }
 
+        internal virtual void UpdateLobbyCampaign(string campaign) { }
+
         public virtual bool canSendChatMessages => false;
         public virtual void SendChatMessage(string message) { }
         public virtual void RecieveChatMessage(OnlinePlayer player, string message) {

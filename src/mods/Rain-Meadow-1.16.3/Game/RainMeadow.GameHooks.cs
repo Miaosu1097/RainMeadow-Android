@@ -15,6 +15,30 @@ namespace RainMeadow
     public partial class RainMeadow
     {
         static bool doneCutscene; // HACK: should keep track of local firstTimeRealized for RoomSpecificScripts
+        private const int OverworldTransitionTimeoutSeconds = 10;
+        private string? overworldReleaseError;
+
+        private sealed class OverworldLoadTimeoutException : Exception
+        {
+            public OverworldLoadTimeoutException() : base("Could not load the online world. Please rejoin the lobby.") { }
+        }
+
+        private static bool WaitForOverworld(Lobby lobby, bool available)
+        {
+            var timer = System.Diagnostics.Stopwatch.StartNew();
+            while (ReferenceEquals(OnlineManager.lobby, lobby))
+            {
+                if (lobby.overworld.isAvailable == available && (!available || !lobby.overworld.isPending))
+                {
+                    return true;
+                }
+                if (timer.Elapsed.TotalSeconds >= OverworldTransitionTimeoutSeconds) break;
+
+                OnlineManager.ForceLoadUpdate();
+                System.Threading.Thread.Sleep(1);
+            }
+            return false;
+        }
 
         // setup things
         // prevent creature spawns
@@ -201,17 +225,15 @@ namespace RainMeadow
                 cursor.Emit(OpCodes.Ldarg_0);
                 cursor.EmitDelegate((OverWorld self) =>
                 {
-                    if (OnlineManager.lobby != null)
+                    if (OnlineManager.lobby is Lobby lobby)
                     {
-                        if (OnlineManager.lobby.overworld.isActive) OnlineManager.lobby.overworld.Deactivate();
+                        var overworld = lobby.overworld;
+                        if (overworld.isActive) overworld.Deactivate();
 
-                        OnlineManager.lobby.overworld.BindOverworld(self);
-                        OnlineManager.lobby.overworld.Needed();
-                        while (!OnlineManager.lobby.overworld.isAvailable)
-                        {
-                            OnlineManager.ForceLoadUpdate();
-                        }
-                        OnlineManager.lobby.overworld.Activate();
+                        overworld.BindOverworld(self);
+                        overworld.Needed();
+                        if (!WaitForOverworld(lobby, available: true)) throw new OverworldLoadTimeoutException();
+                        overworld.Activate();
                     }
                 });
             }
@@ -658,24 +680,19 @@ namespace RainMeadow
         private void RainWorldGame_ShutDownProcess(On.RainWorldGame.orig_ShutDownProcess orig, RainWorldGame self)
         {
             orig(self);
-            if (OnlineManager.lobby != null)
+            if (OnlineManager.lobby is Lobby lobby)
             {
                 DebugOverlay.RemoveOverlay(self);
                 ProfilerOverlay.RemoveOverlay(self);
+                lobby.gameMode.GameShutDown(self);
+                if (!ReferenceEquals(OnlineManager.lobby, lobby)) return;
 
-                OnlineManager.lobby.gameMode.GameShutDown(self);
-
-                OnlineManager.lobby.overworld.NotNeeded();
-                if (OnlineManager.lobby.overworld.isActive)
+                lobby.overworld.NotNeeded();
+                if (lobby.overworld.isActive) lobby.overworld.Deactivate();
+                if (self.manager.upcomingProcess != ProcessManager.ProcessID.MainMenu
+                    && !WaitForOverworld(lobby, available: false))
                 {
-                    OnlineManager.lobby.overworld.Deactivate();
-                }
-                if (self.manager.upcomingProcess != ProcessManager.ProcessID.MainMenu) // quit directly, otherwise wait release
-                {
-                    while (OnlineManager.lobby.overworld.isAvailable)
-                    {
-                        OnlineManager.ForceLoadUpdate();
-                    }
+                    overworldReleaseError = "Could not release the online world. Please rejoin the lobby.";
                 }
             }
         }

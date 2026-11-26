@@ -337,9 +337,52 @@ namespace RainMeadow
             var list = await SteamLobbyProbe.WaitForReply(job.ToTask(), "Steam lobby query", token).ConfigureAwait(false);
             if (list.Result != EResult.OK)
                 throw new SteamLobbyProbe.SteamResultException("Steam lobby query", list.Result);
-            return list.Lobbies?.Select(room =>
-                new SteamLobbySummary(room.SteamID.ConvertToUInt64(), room.Metadata, room.NumMembers, room.MaxMembers))
-                .ToArray() ?? Array.Empty<SteamLobbySummary>();
+            if (list.Lobbies == null) return Array.Empty<SteamLobbySummary>();
+
+            using var pinLookup = CancellationTokenSource.CreateLinkedTokenSource(token);
+            pinLookup.CancelAfter(TimeSpan.FromSeconds(5));
+            using var pinLookupSlots = new SemaphoreSlim(8);
+            var rooms = await Task.WhenAll(list.Lobbies.Select(room => SummarizeRoomAsync(room, pinLookupSlots, pinLookup.Token)))
+                .ConfigureAwait(false);
+            token.ThrowIfCancellationRequested();
+            return rooms;
+        }
+
+        private async Task<SteamLobbySummary> SummarizeRoomAsync(SteamMatchmaking.Lobby room, SemaphoreSlim pinLookupSlots, CancellationToken token)
+        {
+            ulong lobbyId = room.SteamID.ConvertToUInt64();
+            var summary = new SteamLobbySummary(lobbyId, room.Metadata, room.NumMembers, room.MaxMembers);
+            if (!room.Metadata.TryGetValue(MatchmakingManager.PINNED_KEY, out var pinValue)
+                || !bool.TryParse(pinValue, out bool pinRequested) || !pinRequested) return summary;
+
+            // Steam's list response can omit the owner or carry a cached owner. Confirm both fields.
+            try
+            {
+                await pinLookupSlots.WaitAsync(token).ConfigureAwait(false);
+                try
+                {
+                    var job = matchmaking.GetLobbyData(RainWorldAppId, room.SteamID);
+                    if (job == null) return summary;
+                    var details = (await SteamLobbyProbe.WaitForReply(job.ToTask(), "Steam pinned lobby lookup", token)
+                        .ConfigureAwait(false)).Lobby;
+                    if (details == null || details.SteamID.ConvertToUInt64() != lobbyId) return summary;
+                    bool trustedOwner = details.OwnerSteamID is SteamID owner
+                        && SteamMatchmakingManager.IsTrustedSteamAccount(owner.ConvertToUInt64());
+                    return new SteamLobbySummary(lobbyId, details.Metadata, details.NumMembers, details.MaxMembers, trustedOwner);
+                }
+                finally
+                {
+                    pinLookupSlots.Release();
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                return summary;
+            }
+            catch (Exception)
+            {
+                return summary;
+            }
         }
 
 #if MEADOW_STEAM_GAMEPLAY
@@ -417,6 +460,31 @@ namespace RainMeadow
                 Dispose();
                 throw;
             }
+        }
+
+        internal async Task<T?> ReadTextFilterSettingAsync<TRequest, T>(string method, TRequest request,
+            CancellationToken token) where TRequest : ProtoBuf.IExtensible, new() where T : class, ProtoBuf.IExtensible, new()
+        {
+            var messages = client.GetHandler<SteamUnifiedMessages>();
+            if (!IsConnected || messages == null) return null;
+            var job = messages.SendMessage(method, request);
+            var reply = await SteamLobbyProbe.WaitForReply(job.ToTask(), method, token).ConfigureAwait(false);
+            return reply.Result == EResult.OK ? reply.GetDeserializedResponse<T>() : null;
+        }
+
+        internal async Task UpdateRoomCampaignAsync(ulong roomId, string campaign, CancellationToken token)
+        {
+            var room = CachedRoom(roomId);
+            if (!IsConnected || room?.OwnerSteamID?.ConvertToUInt64() != SteamAccountId) return;
+            var metadata = room.Metadata.ToDictionary(entry => entry.Key, entry => entry.Value);
+            if (metadata.TryGetValue(MatchmakingManager.CAMPAIGN_KEY, out var previous) && previous == campaign) return;
+            metadata[MatchmakingManager.CAMPAIGN_KEY] = campaign;
+
+            token.ThrowIfCancellationRequested();
+            var job = matchmaking.SetLobbyData(RainWorldAppId, room.SteamID, room.LobbyType, room.MaxMembers, room.LobbyFlags, metadata);
+            var result = await SteamLobbyProbe.WaitForReply(job.ToTask(), "Steam lobby campaign update", token).ConfigureAwait(false);
+            if (result.Result != EResult.OK)
+                throw new SteamLobbyProbe.SteamResultException("Steam lobby campaign update", result.Result);
         }
 
         internal void LeaveRoom(ulong roomId)
@@ -584,8 +652,9 @@ namespace RainMeadow
         internal readonly string BannedMods;
         internal readonly string Campaign;
         internal readonly string WhitelistMods;
+        internal readonly bool Pinned;
 
-        internal SteamLobbySummary(ulong id, IReadOnlyDictionary<string, string> metadata, int players, int capacity)
+        internal SteamLobbySummary(ulong id, IReadOnlyDictionary<string, string> metadata, int players, int capacity, bool trustedOwner = false)
         {
             Id = id;
             Name = ReadLabel(metadata, "name", "Unnamed lobby");
@@ -597,6 +666,7 @@ namespace RainMeadow
             BannedMods = Read(metadata, "banned_mods");
             Campaign = ReadLabel(metadata, "campaign", "");
             WhitelistMods = Read(metadata, "whitelistmods");
+            Pinned = trustedOwner && ReadBoolean(metadata, MatchmakingManager.PINNED_KEY);
         }
 
         private static string Read(IReadOnlyDictionary<string, string> metadata, string key)

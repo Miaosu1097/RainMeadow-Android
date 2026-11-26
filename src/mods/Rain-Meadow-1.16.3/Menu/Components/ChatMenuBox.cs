@@ -75,6 +75,7 @@ namespace RainMeadow.UI.Components
             List<AlignedMenuLabel> messageLabels = [];
             ChatLogManager.SystemMessageType? systemMessageType = ChatLogManager.SysMesSignatureToType(user);
             bool isSystemMessage = systemMessageType is not null;
+            if (!isSystemMessage) MatchmakingManager.currentInstance.FilterMessage(ref message);
             float desiredXWidth = messageScroller.size.x - 5;
             Vector2 desiredSize = new(desiredXWidth, messageScroller.buttonHeight);
 
@@ -92,7 +93,6 @@ namespace RainMeadow.UI.Components
 
             if (ChatLogManager.ShouldMuteMessageFromUser(user)) return;
 
-            MatchmakingManager.currentInstance.FilterMessage(ref message);
             if (ChatLogManager.ShouldPingFromMessage(user, message))
             {
                 menu.manager.menuMic.PlaySound(RainMeadow.Ext_SoundID.RM_Slugcat_Call, 0, 1f, 1.2f);

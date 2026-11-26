@@ -85,6 +85,7 @@ namespace RainMeadow
             MatchmakingManager.currentInstance.LeaveLobby();
             netIO?.ForgetEverything();
             lobby = null;
+            deferredEvents.Clear();
 
             subscriptions = new();
             feeds = new();
@@ -135,11 +136,13 @@ namespace RainMeadow
 
         public override void Update()
         {
-            if (lobby != null)
+            if (lobby is Lobby updatingLobby)
             {
                 mePlayer.tick++;
                 ProcessSelfEvents();
+                if (!ReferenceEquals(lobby, updatingLobby)) return;
                 ProcessDeferredEvents();
+                if (!ReferenceEquals(lobby, updatingLobby)) return;
 
                 if (lobby.isActive)
                 {
@@ -221,13 +224,14 @@ namespace RainMeadow
         }
 
 
-        private static Queue<Action> deferredEvents = new Queue<Action>(4);
+        private static readonly Queue<Action> deferredEvents = new Queue<Action>(4);
         public static void RunDeferred(Action action) { deferredEvents.Enqueue(action); }
         public void ProcessDeferredEvents()
         {
             // stuff we want to process after done reading everything incoming
+            var updatingLobby = lobby;
             int runMax = 1000;
-            while (deferredEvents.Count > 0 && runMax > 0)
+            while (deferredEvents.Count > 0 && runMax > 0 && ReferenceEquals(lobby, updatingLobby))
             {
                 runMax--;
                 try

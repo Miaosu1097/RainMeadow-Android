@@ -5,7 +5,6 @@ using System.Text.RegularExpressions;
 using Menu;
 using Menu.Remix.MixedUI;
 using RWCustom;
-using Steamworks;
 using UnityEngine;
 
 namespace RainMeadow
@@ -117,8 +116,7 @@ namespace RainMeadow
                 storyGameMode.requireCampaignSlugcat = false;
                 storyGameMode.saveToDisk = true;
 
-                if (MatchmakingManager.currentInstance is SteamMatchmakingManager steamMatchmakingManager)
-                    SteamMatchmaking.SetLobbyData(steamMatchmakingManager.lobbyID, MatchmakingManager.CAMPAIGN_KEY, "");
+                MatchmakingManager.currentInstance.UpdateLobbyCampaign("");
             }
             else
             {
@@ -289,8 +287,8 @@ namespace RainMeadow
             manager.rainWorld.progression.ClearOutSaveStateFromMemory();
             manager.RequestMainProcessSwitch(ProcessManager.ProcessID.Game);
 
-            if (MatchmakingManager.currentInstance is SteamMatchmakingManager steamMatchmakingManager)
-                SteamMatchmaking.SetLobbyData(steamMatchmakingManager.lobbyID, MatchmakingManager.CAMPAIGN_KEY, storyGameMode.currentCampaign.value);
+            if (OnlineManager.lobby?.isOwner == true)
+                MatchmakingManager.currentInstance.UpdateLobbyCampaign(storyGameMode.currentCampaign.value);
         }
         public override void Update()
         {
@@ -494,7 +492,8 @@ namespace RainMeadow
             ChatLogManager.MessageLogged -= OnMessageLogged;
 
             RainMeadow.DebugMe();
-            if ((manager.upcomingProcess != ProcessManager.ProcessID.Game) &&
+            if (OnlineManager.lobby != null &&
+                (manager.upcomingProcess != ProcessManager.ProcessID.Game) &&
                 (manager.upcomingProcess != ProcessManager.ProcessID.InputOptions)) // if join on sleep/deathscreen this needs to be added here as well
             {
                 OnlineManager.LeaveLobby();
@@ -773,7 +772,7 @@ namespace RainMeadow
                 this.chatTextBox = new ChatTextBox(this, pages[0], "", new Vector2(this.chatTextBoxPos.x + 24, 0), new(575, 30));
                 pages[0].subObjects.Add(this.chatTextBox);
             }
-            if (OnlineManager.lobby.clientSettings.TryGetValue(OnlineManager.mePlayer, out var cs))
+            if (OnlineManager.lobby?.clientSettings.TryGetValue(OnlineManager.mePlayer, out var cs) == true)
             {
                 cs.isInteracting = false;
             }
@@ -844,7 +843,9 @@ namespace RainMeadow
                         pages[0].subObjects.Add(usernameLabel);
 
                         var usernameWidth = LabelTest.GetWidth(usernameLabel.label.text);
-                        var messageLabel = new MenuLabel(this, pages[0], $": {message}",
+                        var displayMessage = message;
+                        MatchmakingManager.currentInstance.FilterMessage(ref displayMessage);
+                        var messageLabel = new MenuLabel(this, pages[0], $": {displayMessage}",
                             new Vector2(1366f - manager.rainWorld.screenSize.x - 660f + usernameWidth + 2f, 330f - yOffSet),
                             new Vector2(manager.rainWorld.screenSize.x, 30f), false);
                         messageLabel.label.alignment = FLabelAlignment.Left;

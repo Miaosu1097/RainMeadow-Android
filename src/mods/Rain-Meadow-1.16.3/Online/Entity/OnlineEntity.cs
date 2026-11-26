@@ -264,7 +264,15 @@ namespace RainMeadow
                 if (inResource is WorldSession or RoomSession)
                 {
                     // let those last state packets come in first
-                    OnlineManager.RunDeferred(() => Deregister());
+                    OnlineManager.RunDeferred(() =>
+                    {
+                        if (primaryResource == null && currentlyEnteredResource == null && !isPending
+                            && OnlineManager.recentEntities.TryGetValue(id, out var entity)
+                            && ReferenceEquals(entity, this))
+                        {
+                            Deregister();
+                        }
+                    });
                 }
                 else
                 {

@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
 using SteamMatchmaking = SteamKit2.SteamMatchmaking;
 using Steamworks;
 
@@ -25,13 +26,20 @@ internal sealed class ManagedSteamGameplay : MatchmakingManager
     private SteamMatchmaking.Lobby? roster;
     private ulong roomId;
     private ulong ownerId;
+    private string? pendingCampaign;
+    private Task? campaignUpdate;
+    private readonly SteamTextFilter textFilter;
     private Stopwatch? connectionDeadline;
     private int signalsSent;
     private int signalsReceived;
     private readonly byte[] packet = new byte[65536];
     private readonly byte[] rendezvous = new byte[8192];
 
-    private ManagedSteamGameplay(SteamLobbySession session) => Session = session;
+    private ManagedSteamGameplay(SteamLobbySession session)
+    {
+        Session = session;
+        textFilter = new SteamTextFilter(session);
+    }
 
     internal static void Activate(SteamLobbySession session)
     {
@@ -42,6 +50,7 @@ internal sealed class ManagedSteamGameplay : MatchmakingManager
             instances[MatchMakingDomain.Steam] = active;
         }
 
+        active!.textFilter.Prepare();
         if (currentDomain != MatchMakingDomain.Steam)
             currentDomain = MatchMakingDomain.Steam;
         if (OnlineManager.netIO is not ManagedNetIO)
@@ -68,6 +77,35 @@ internal sealed class ManagedSteamGameplay : MatchmakingManager
     public override string GetLobbyID() => roomId == 0 ? "" : roomId.ToString();
     public override string GetCurrentLobbyJoinCode(string? password) => roomId == 0 ? "" : FormatJoinCode(password, roomId);
     public override void OpenInvitationOverlay() { }
+
+    public override bool IsDev(MeadowPlayerId player) => player is SteamMatchmakingManager.SteamPlayerId steam
+        && SteamMatchmakingManager.IsTrustedSteamAccount(steam.steamID.m_SteamID);
+
+    public override bool IsTrustedCommunity(MeadowPlayerId player) => IsDev(player);
+
+    public override void FilterMessage(ref string message) => message = textFilter.Apply(message);
+
+    public override string FilterTeamName(string name) => textFilter.Apply(name);
+
+    internal override void UpdateLobbyCampaign(string campaign)
+    {
+        if (roomId != 0 && ownerId == Session.SteamAccountId && OnlineManager.lobby?.isOwner == true)
+            pendingCampaign = campaign;
+    }
+
+    private async Task PublishCampaignAsync(ulong publishingRoom, string campaign)
+    {
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            await Session.UpdateRoomCampaignAsync(publishingRoom, campaign, timeout.Token);
+        }
+        catch (Exception error)
+        {
+            if (roomId == publishingRoom)
+                RainMeadow.Warn("Steam lobby campaign update failed: " + error.Message);
+        }
+    }
 
     protected override LobbyInfo? LobbyInfoFromJoinArgs(string[] parts, int argsStart) =>
         parts.Length > argsStart && ulong.TryParse(parts[argsStart], out ulong id)
@@ -252,6 +290,8 @@ internal sealed class ManagedSteamGameplay : MatchmakingManager
             OnLobbyLeavingEvent();
         }
         ownerId = 0;
+        pendingCampaign = null;
+        campaignUpdate = null;
         roster = null;
         transport?.Dispose();
         transport = null;
@@ -304,6 +344,12 @@ internal sealed class ManagedSteamGameplay : MatchmakingManager
         var nextRoster = Session.CachedRoom(roomId);
         if (nextRoster != null && nextRoster.Members.Count > 0 && !ReferenceEquals(roster, nextRoster))
             ApplyRoster(nextRoster);
+        if (pendingCampaign is string campaign && (campaignUpdate == null || campaignUpdate.IsCompleted)
+            && ownerId == Session.SteamAccountId && OnlineManager.lobby?.isOwner == true)
+        {
+            pendingCampaign = null;
+            campaignUpdate = PublishCampaignAsync(roomId, campaign);
+        }
 
         for (int i = 0; i < 32 && Session.Signaling.Next(out var signal); ++i)
             if (net.ReceiveSignal(signal.peer, signal.data)) signalsReceived++;

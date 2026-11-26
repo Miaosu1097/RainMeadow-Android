@@ -827,6 +827,13 @@ namespace RainMeadow
 
         private void ProcessManager_PostSwitchMainProcess(On.ProcessManager.orig_PostSwitchMainProcess orig, ProcessManager self, ProcessManager.ProcessID ID)
         {
+            if (overworldReleaseError is string releaseError)
+            {
+                overworldReleaseError = null;
+                RecoverFromOverworldTransition(orig, self, releaseError);
+                return;
+            }
+
             if (ID == Ext_ProcessID.LobbySelectMenu) self.currentMainLoop = new LobbySelectMenu(self);
             if (ID == Ext_ProcessID.LobbyCreateMenu) self.currentMainLoop = new LobbyCreateMenu(self);
             if (ID == Ext_ProcessID.ArenaLobbyMenu) self.currentMainLoop = new ArenaOnlineLobbyMenu(self);
@@ -834,7 +841,15 @@ namespace RainMeadow
             if (ID == Ext_ProcessID.StoryMenu) self.currentMainLoop = new StoryOnlineMenu(self);
             if (ID == Ext_ProcessID.MeadowCredits) self.currentMainLoop = new MeadowCredits(self);
 
-            orig(self, ID);
+            try
+            {
+                orig(self, ID);
+            }
+            catch (OverworldLoadTimeoutException error) when (ID == ProcessManager.ProcessID.Game)
+            {
+                RecoverFromOverworldTransition(orig, self, error.Message);
+                return;
+            }
 
             if (ID == ProcessManager.ProcessID.MainMenu && !consumedCommandLineJoinCode)
             {
@@ -859,6 +874,16 @@ namespace RainMeadow
                     RainMeadow.Debug(ex);
                 }
             }
+        }
+
+        private static void RecoverFromOverworldTransition(On.ProcessManager.orig_PostSwitchMainProcess orig, ProcessManager manager, string error)
+        {
+            Warn(error);
+            if (OnlineManager.lobby != null) OnlineManager.LeaveLobby();
+            manager._processSwitchQueue.Clear();
+            manager.currentMainLoop = new LobbySelectMenu(manager);
+            orig(manager, Ext_ProcessID.LobbySelectMenu);
+            manager.ShowDialog(new DialogNotify(manager.rainWorld.inGameTranslator.Translate(error), manager, null));
         }
 
         private static void IL_MainMenu_AddMainMenuButton(ILContext il)

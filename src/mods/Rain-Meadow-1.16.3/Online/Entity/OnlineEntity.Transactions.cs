@@ -15,10 +15,10 @@
                 isTransfering = true;
                 pendingRequest = owner.InvokeRPC(this.Requested).Then(this.ResolveRequest);
             }
-            else if (primaryResource.owner != null)
+            else if (primaryResource?.owner is { hasLeft: false } supervisor)
             {
                 isTransfering = true;
-                pendingRequest = primaryResource.owner.InvokeRPC(this.Requested).Then(this.ResolveRequest);
+                pendingRequest = supervisor.InvokeRPC(Requested).Then(ResolveRequest);
             }
             else
             {
@@ -54,8 +54,8 @@
         public virtual void ResolveRequest(GenericResult requestResult)
         {
             RainMeadow.Debug(this);
-            if (requestResult.referencedEvent == pendingRequest) pendingRequest = null;
-            else RainMeadow.Error($"Weird event situation, pending is {pendingRequest} and referenced is {requestResult.referencedEvent}");
+            if (pendingRequest == null || requestResult.referencedEvent != pendingRequest) return;
+            pendingRequest = null;
             if (requestResult is GenericResult.Ok) // I'm the new owner of this entity
             {
                 // no op, comes as state in the same tick
@@ -82,10 +82,10 @@
             {
                 RainMeadow.Debug("Staying as supervisor");
             }
-            else if (primaryResource.owner != null)
+            else if (primaryResource.owner is { hasLeft: false } supervisor)
             {
                 isTransfering = true;
-                this.pendingRequest = primaryResource.owner.InvokeRPC(Released, currentlyJoinedResource).Then(ResolveRelease);
+                pendingRequest = supervisor.InvokeRPC(Released, currentlyJoinedResource).Then(ResolveRelease);
             }
         }
 
@@ -121,19 +121,24 @@
         public void ResolveRelease(GenericResult result)
         {
             RainMeadow.Debug(this);
-            if (result.referencedEvent == pendingRequest) pendingRequest = null;
-            else RainMeadow.Error($"Weird event situation, pending is {pendingRequest} and referenced is {result.referencedEvent}");
-            if (result is GenericResult.Ok)
+            if (result.referencedEvent != pendingRequest)
             {
-                // no op
+                RainMeadow.Error($"Weird event situation, pending is {pendingRequest} and referenced is {result.referencedEvent}");
+                return;
             }
-            else if (result is GenericResult.Error) // Something went wrong, I should retry
+            pendingRequest = null;
+
+            if (result is GenericResult.Error)
             {
-                RainMeadow.Error("request failed for " + this);
                 isTransfering = false;
-                if (isTransferable && isMine && !isPending)
+                // Aborting a release during disconnect must not recreate it in the outgoing queue.
+                if (!result.referencedEvent.aborted)
                 {
-                    Release();
+                    RainMeadow.Error("request failed for " + this);
+                    if (isTransferable && isMine && !isPending)
+                    {
+                        Release();
+                    }
                 }
             }
             if (isMine) JoinOrLeavePending(); // keep ticking

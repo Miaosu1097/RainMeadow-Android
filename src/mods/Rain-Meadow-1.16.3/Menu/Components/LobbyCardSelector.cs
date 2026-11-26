@@ -135,11 +135,8 @@ public class LobbyCardSelector : ButtonScroller, SelectOneButton.SelectOneButton
     {
         ClearLobbyCards();
 
-        List<LobbyInfo> pinnedCards =
-        [
-            .. filter.filteredInfos.TakeWhile(lobbyInfo => lobbyInfo.pinned),
-        ];
-        List<LobbyInfo> regularCards = [.. filter.filteredInfos.Except(pinnedCards)];
+        List<LobbyInfo> pinnedCards = [.. filter.filteredInfos.Where(info => info.pinned)];
+        List<LobbyInfo> regularCards = [.. filter.filteredInfos.Where(info => !info.pinned)];
 
 #pragma warning disable CS8524
         List<LobbyInfo> SortCards(List<LobbyInfo> cards)

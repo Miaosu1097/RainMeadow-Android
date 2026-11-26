@@ -169,7 +169,7 @@ namespace RainMeadow
             }
         }
 
-        private static HashSet<string> devSteamIdHashes = new HashSet<string>()
+        private static readonly HashSet<string> devSteamIdHashes = new HashSet<string>()
         {
             "AOOTy8PrB9DWbAxExg9BbhiLBbRqAgmsRLoAHnIGXOU=",
             "dlWUAGjYBtAdypcmLwbDnZ73akq624OiSNIQ//ecsms=",
@@ -196,37 +196,18 @@ namespace RainMeadow
             "M3smpDDQz/tATCx0pV4fdW1GDsSWgdbCaAxPhT46cH0="
         };
 
-        public override bool IsDev(MeadowPlayerId player)
+        internal static bool IsTrustedSteamAccount(ulong steamId)
         {
-            if (player is SteamPlayerId steamid)
-            {
-                ulong steamID = steamid.oid.GetSteamID64();
-                SHA256 Sha = SHA256.Create();
-                var steamIDHash = Convert.ToBase64String(Sha.ComputeHash(Encoding.ASCII.GetBytes(steamID.ToString())));
-
-                if (devSteamIdHashes.Contains(steamIDHash))
-                {
-                    return true;
-                }
-            }
-            return false;
+            if (steamId == 0) return false;
+            using var sha = SHA256.Create();
+            var hash = sha.ComputeHash(Encoding.ASCII.GetBytes(steamId.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            return devSteamIdHashes.Contains(Convert.ToBase64String(hash));
         }
 
-        public override bool IsTrustedCommunity(MeadowPlayerId player)
-        {
-            if (player is SteamPlayerId steamid)
-            {
-                ulong steamID = steamid.oid.GetSteamID64();
-                SHA256 Sha = SHA256.Create();
-                var steamIDHash = Convert.ToBase64String(Sha.ComputeHash(Encoding.ASCII.GetBytes(steamID.ToString())));
+        public override bool IsDev(MeadowPlayerId player) =>
+            player is SteamPlayerId steam && IsTrustedSteamAccount(steam.steamID.m_SteamID);
 
-                if (devSteamIdHashes.Contains(steamIDHash))
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
+        public override bool IsTrustedCommunity(MeadowPlayerId player) => IsDev(player);
 
         public override void CreateLobby(LobbyVisibility visibility, string gameMode, string? password, int? maxPlayerCount, bool pinned = false)
         {
@@ -394,6 +375,12 @@ namespace RainMeadow
                 throw;
             }
         }
+        internal override void UpdateLobbyCampaign(string campaign)
+        {
+            if (OnlineManager.lobby?.isOwner == true)
+                SteamMatchmaking.SetLobbyData(lobbyID, CAMPAIGN_KEY, campaign);
+        }
+
         public override bool canSendChatMessages => true;
         public override void SendChatMessage(string message)
         {

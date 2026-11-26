@@ -530,6 +530,8 @@ namespace RainMeadow
 
         public override void ResolveRequest(GenericResult requestResult)
         {
+            if (pendingRequest == null || requestResult.referencedEvent != pendingRequest) return;
+
             base.ResolveRequest(requestResult);
             if (requestResult is GenericResult.Ok)
             {
