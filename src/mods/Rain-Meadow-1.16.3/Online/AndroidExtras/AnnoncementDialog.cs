@@ -111,7 +111,7 @@ namespace RainMeadow
             }
             catch (Exception e)
             {
-                Debug.LogError("[AndroidExtras] dialog build error: " + e.Message);
+                UnityEngine.Debug.LogError("[AndroidExtras] dialog build error: " + e.Message);
             }
         }
 
@@ -276,7 +276,7 @@ namespace RainMeadow
             }
             catch (Exception e)
             {
-                Debug.LogError("[AndroidExtras] place image failed: " + e.Message);
+                UnityEngine.Debug.LogError("[AndroidExtras] place image failed: " + e.Message);
                 return top;
             }
         }
@@ -395,7 +395,7 @@ namespace RainMeadow
             }
             catch (Exception e)
             {
-                Debug.LogError("[AndroidExtras] close failed: " + e.Message);
+                UnityEngine.Debug.LogError("[AndroidExtras] close failed: " + e.Message);
             }
         }
 

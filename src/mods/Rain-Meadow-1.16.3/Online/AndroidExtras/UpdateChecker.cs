@@ -27,8 +27,20 @@ namespace RainMeadow
     /// </summary>
     internal static class UpdateChecker
     {
-        private const string VersionUrl =
-            "https://raw.githubusercontent.com/Miaosu1097/RainMeadow-Android/main/version.json";
+        /// <summary>
+        /// 公告/更新数据源。按顺序尝试，第一个能解析成 JSON 成功的就用。
+        ///
+        /// 实测（国内网络）：raw.githubusercontent.com 与 cdn.jsdelivr.net 均超时不可达，
+        /// 只有 GitHub 公共代理可用，因此把 gh-proxy.com 放在首位。
+        /// 海外用户或代理恢复时会自然回落到官方直连。
+        /// </summary>
+        private static readonly string[] VersionUrls =
+        {
+            "https://gh-proxy.com/https://raw.githubusercontent.com/Miaosu1097/RainMeadow-Android/main/version.json",
+            "https://raw.githubusercontent.com/Miaosu1097/RainMeadow-Android/main/version.json",
+            "https://cdn.jsdelivr.net/gh/Miaosu1097/RainMeadow-Android@main/version.json",
+            "https://ghfast.top/https://raw.githubusercontent.com/Miaosu1097/RainMeadow-Android/main/version.json",
+        };
         private const string RepoUrl =
             "https://github.com/Miaosu1097/RainMeadow-Android/releases/latest";
 
@@ -84,6 +96,8 @@ namespace RainMeadow
             installed = true;
             host = self;
             On.RainWorld.Update += Tick;
+            UnityEngine.Debug.Log("[AndroidExtras] update checker installed, platform=" + Application.platform
+                      + " sources=" + VersionUrls.Length);
         }
 
         // ================= 启动时替换已下载的文件 =================
@@ -95,7 +109,7 @@ namespace RainMeadow
                 string root = ModRoot();
                 if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
                 {
-                    Debug.LogWarning("[AndroidExtras] mod root not found");
+                    UnityEngine.Debug.LogWarning("[AndroidExtras] mod root not found");
                     return;
                 }
 
@@ -110,17 +124,17 @@ namespace RainMeadow
                             File.Delete(target);
                         }
                         File.Move(newFile, target);
-                        Debug.Log("[AndroidExtras] applied: " + Relative(root, target));
+                        UnityEngine.Debug.Log("[AndroidExtras] applied: " + Relative(root, target));
                     }
                     catch (Exception e)
                     {
-                        Debug.LogError("[AndroidExtras] apply failed: " + Relative(root, target) + " / " + e.Message);
+                        UnityEngine.Debug.LogError("[AndroidExtras] apply failed: " + Relative(root, target) + " / " + e.Message);
                     }
                 }
             }
             catch (Exception e)
             {
-                Debug.LogError("[AndroidExtras] apply pending error: " + e.Message);
+                UnityEngine.Debug.LogError("[AndroidExtras] apply pending error: " + e.Message);
             }
         }
 
@@ -188,7 +202,7 @@ namespace RainMeadow
             }
             catch (Exception e)
             {
-                Debug.LogError("[AndroidExtras] tick error: " + e.Message);
+                UnityEngine.Debug.LogError("[AndroidExtras] tick error: " + e.Message);
             }
         }
 
@@ -204,8 +218,24 @@ namespace RainMeadow
             nextRetryAt = Time.realtimeSinceStartup + RetrySeconds;
             lastReachability = Application.internetReachability;
 
+            UnityEngine.Debug.Log("[AndroidExtras] checking, reachability=" + Application.internetReachability);
+
             if (host == null) { phase = Phase.Failed; return; }
             host.StartCoroutine(Fetch());
+        }
+
+        /// <summary>
+        /// 把 GitHub 直链换成可用代理链。
+        /// version.json 里的 image / download / targets[].url 都可能是 raw 直链，
+        /// 在拉不到 raw.githubusercontent.com 的地区会静默失败，统一走代理。
+        /// </summary>
+        private static string Proxyify(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return url;
+            const string raw = "https://raw.githubusercontent.com/";
+            if (url.StartsWith(raw, StringComparison.OrdinalIgnoreCase))
+                return "https://gh-proxy.com/" + url;
+            return url;
         }
 
         private static void TryRecover()
@@ -217,7 +247,7 @@ namespace RainMeadow
 
             if (online || Time.realtimeSinceStartup >= nextRetryAt)
             {
-                Debug.Log("[AndroidExtras] retry (online=" + online + ")");
+                UnityEngine.Debug.Log("[AndroidExtras] retry (online=" + online + ")");
                 StartCheck();
             }
         }
@@ -226,27 +256,45 @@ namespace RainMeadow
 
         private static IEnumerator Fetch()
         {
-            string body = null;
-            using (var req = UnityWebRequest.Get(VersionUrl))
+            JObject root = null;
+            string usedUrl = null;
+
+            // 依次尝试所有源，只有成功解析成 JSON 才算成功（防止代理返回错误网页）
+            for (int i = 0; i < VersionUrls.Length; i++)
             {
-                req.timeout = 10;
-                yield return req.SendWebRequest();
-                if (req.result == UnityWebRequest.Result.Success) body = req.downloadHandler.text;
-                else Debug.LogWarning("[AndroidExtras] fetch failed: " + req.result);
+                string url = VersionUrls[i];
+                string body = null;
+
+                using (var req = UnityWebRequest.Get(url))
+                {
+                    req.timeout = 6;
+                    yield return req.SendWebRequest();
+                    if (req.result == UnityWebRequest.Result.Success)
+                        body = req.downloadHandler.text;
+                    else
+                        UnityEngine.Debug.LogWarning("[AndroidExtras] source " + (i + 1) + "/" + VersionUrls.Length
+                                         + " failed (" + req.result + "): " + url);
+                }
+
+                if (string.IsNullOrEmpty(body)) continue;
+
+                try
+                {
+                    root = JObject.Parse(body);
+                    usedUrl = url;
+                    UnityEngine.Debug.Log("[AndroidExtras] source " + (i + 1) + "/" + VersionUrls.Length + " OK: " + url);
+                    break;
+                }
+                catch (Exception e)
+                {
+                    UnityEngine.Debug.LogWarning("[AndroidExtras] source " + (i + 1) + "/" + VersionUrls.Length
+                                     + " bad json (" + e.Message + "): " + url);
+                }
             }
 
-            if (string.IsNullOrEmpty(body))
+            if (root == null)
             {
-                phase = Phase.Failed;
-                nextRetryAt = Time.realtimeSinceStartup + RetrySeconds;
-                yield break;
-            }
-
-            JObject root;
-            try { root = JObject.Parse(body); }
-            catch (Exception e)
-            {
-                Debug.LogError("[AndroidExtras] bad json: " + e.Message);
+                UnityEngine.Debug.LogError("[AndroidExtras] all " + VersionUrls.Length + " sources failed");
                 phase = Phase.Failed;
                 nextRetryAt = Time.realtimeSinceStartup + RetrySeconds;
                 yield break;
@@ -256,7 +304,9 @@ namespace RainMeadow
             ParseRelease(root.Value<JObject>("release"));
 
             phase = Phase.Done;
-            Debug.Log("[AndroidExtras] done: notice=" + hasNotice + " release=" + hasRelease);
+            UnityEngine.Debug.Log("[AndroidExtras] done via " + usedUrl
+                      + " : notice=" + hasNotice + " release=" + hasRelease
+                      + " noticeVersion=" + (hasNotice ? noticeVersion : "-"));
         }
 
         private static void ParseNotice(JObject o)
@@ -327,7 +377,7 @@ namespace RainMeadow
             ParseTargets(o.Value<JArray>("targets"));
 
             hasRelease = true;
-            Debug.Log("[AndroidExtras] release " + v + " force=" + relForce + " targets=" + relTargets.Count);
+            UnityEngine.Debug.Log("[AndroidExtras] release " + v + " force=" + relForce + " targets=" + relTargets.Count);
         }
 
         /// <summary>
@@ -404,7 +454,7 @@ namespace RainMeadow
             }
             catch (Exception e)
             {
-                Debug.LogError("[AndroidExtras] failure dialog: " + e.Message);
+                UnityEngine.Debug.LogError("[AndroidExtras] failure dialog: " + e.Message);
             }
         }
 
@@ -464,7 +514,7 @@ namespace RainMeadow
             }
             catch (Exception e)
             {
-                Debug.LogError("[AndroidExtras] content dialog: " + e.Message);
+                UnityEngine.Debug.LogError("[AndroidExtras] content dialog: " + e.Message);
             }
         }
 
@@ -479,19 +529,19 @@ namespace RainMeadow
             foreach (var url in noticeImages)
             {
                 byte[] data = null;
-                using (var req = UnityWebRequest.Get(url))
+                using (var req = UnityWebRequest.Get(Proxyify(url)))
                 {
                     req.timeout = 40;
                     yield return req.SendWebRequest();
                     if (req.result == UnityWebRequest.Result.Success) data = req.downloadHandler.data;
-                    else Debug.LogWarning("[AndroidExtras] image failed: " + url + " / " + req.result);
+                    else UnityEngine.Debug.LogWarning("[AndroidExtras] image failed: " + url + " / " + req.result);
                 }
 
                 if (data == null || data.Length == 0) continue;
 
                 var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
                 if (tex.LoadImage(data)) textures.Add(tex);
-                else Debug.LogWarning("[AndroidExtras] image decode failed: " + url);
+                else UnityEngine.Debug.LogWarning("[AndroidExtras] image decode failed: " + url);
             }
 
             try
@@ -503,7 +553,7 @@ namespace RainMeadow
             }
             catch (Exception e)
             {
-                Debug.LogError("[AndroidExtras] image dialog failed: " + e.Message);
+                UnityEngine.Debug.LogError("[AndroidExtras] image dialog failed: " + e.Message);
             }
         }
 
@@ -529,20 +579,20 @@ namespace RainMeadow
                 string url = string.IsNullOrWhiteSpace(spec.url) ? relDownload : spec.url;
                 if (string.IsNullOrWhiteSpace(url))
                 {
-                    Debug.LogError("[AndroidExtras] no url for " + spec.path);
+                    UnityEngine.Debug.LogError("[AndroidExtras] no url for " + spec.path);
                     fail++;
                     continue;
                 }
 
                 byte[] data = null;
-                using (var req = UnityWebRequest.Get(url))
+                using (var req = UnityWebRequest.Get(Proxyify(url)))
                 {
                     req.timeout = 180;
                     yield return req.SendWebRequest();
                     if (req.result == UnityWebRequest.Result.Success)
                         data = req.downloadHandler.data;
                     else
-                        Debug.LogError("[AndroidExtras] download failed (" + spec.path + "): " + req.result);
+                        UnityEngine.Debug.LogError("[AndroidExtras] download failed (" + spec.path + "): " + req.result);
                 }
 
                 if (data == null || data.Length == 0) { fail++; continue; }
@@ -552,7 +602,7 @@ namespace RainMeadow
                     string actual = Sha256Hex(data);
                     if (!string.Equals(actual, spec.sha256.Trim(), StringComparison.OrdinalIgnoreCase))
                     {
-                        Debug.LogError("[AndroidExtras] sha256 mismatch for " + spec.path
+                        UnityEngine.Debug.LogError("[AndroidExtras] sha256 mismatch for " + spec.path
                                        + " expect " + spec.sha256.Trim() + " actual " + actual);
                         fail++;
                         continue;
@@ -567,11 +617,11 @@ namespace RainMeadow
 
                     File.WriteAllBytes(full + ".new", data);
                     ok++;
-                    Debug.Log("[AndroidExtras] staged: " + spec.path + " (" + data.Length + " bytes)");
+                    UnityEngine.Debug.Log("[AndroidExtras] staged: " + spec.path + " (" + data.Length + " bytes)");
                 }
                 catch (Exception e)
                 {
-                    Debug.LogError("[AndroidExtras] stage failed: " + spec.path + " / " + e.Message);
+                    UnityEngine.Debug.LogError("[AndroidExtras] stage failed: " + spec.path + " / " + e.Message);
                     fail++;
                 }
             }
@@ -613,7 +663,7 @@ namespace RainMeadow
 
                 pm.ShowDialog(new DialogNotify(body, NoticeSize, pm, () => { }));
             }
-            catch (Exception e) { Debug.LogError("[AndroidExtras] restart: " + e.Message); }
+            catch (Exception e) { UnityEngine.Debug.LogError("[AndroidExtras] restart: " + e.Message); }
         }
 
         // ================= 工具 =================
@@ -621,7 +671,7 @@ namespace RainMeadow
         private static void OpenUrl(string url)
         {
             try { Application.OpenURL(string.IsNullOrEmpty(url) ? RepoUrl : url); }
-            catch (Exception e) { Debug.LogError("[AndroidExtras] open url: " + e.Message); }
+            catch (Exception e) { UnityEngine.Debug.LogError("[AndroidExtras] open url: " + e.Message); }
         }
 
         private static string ReadState(string key)
@@ -659,7 +709,7 @@ namespace RainMeadow
                 Directory.CreateDirectory(Path.GetDirectoryName(StatePath));
                 File.WriteAllLines(StatePath, lines);
             }
-            catch (Exception e) { Debug.LogError("[AndroidExtras] write state: " + e.Message); }
+            catch (Exception e) { UnityEngine.Debug.LogError("[AndroidExtras] write state: " + e.Message); }
         }
     }
 }

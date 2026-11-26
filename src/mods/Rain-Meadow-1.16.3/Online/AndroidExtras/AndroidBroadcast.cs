@@ -33,10 +33,13 @@ namespace RainMeadow
             installed = true;
 
             if (Application.platform != RuntimePlatform.Android)
+            {
+                UnityEngine.Debug.Log("[AndroidExtras] broadcast skipped (platform=" + Application.platform + ")");
                 return; // 桌面端不注册任何东西
+            }
 
             On.RainWorld.Update += RainWorld_Update;
-            Debug.Log("[AndroidExtras] broadcast installed, key=" + BroadcastKey.PacketKey);
+            UnityEngine.Debug.Log("[AndroidExtras] broadcast installed, key=" + BroadcastKey.PacketKey);
         }
 
         private static void RainWorld_Update(On.RainWorld.orig_Update orig, RainWorld self)
@@ -49,7 +52,7 @@ namespace RainMeadow
             }
             catch (Exception e)
             {
-                Debug.LogError("[AndroidExtras] broadcast tick failed: " + e);
+                UnityEngine.Debug.LogError("[AndroidExtras] broadcast tick failed: " + e);
             }
         }
 
@@ -125,7 +128,7 @@ namespace RainMeadow
 
             CustomManager.SendCustomData(player, BroadcastKey.PacketKey, PayloadBytes,
                 (ushort)PayloadBytes.Length, NetIO.SendType.Reliable);
-            Debug.Log("[AndroidExtras] broadcast sent to " + player);
+            UnityEngine.Debug.Log("[AndroidExtras] broadcast sent to " + player);
             return true;
         }
     }
