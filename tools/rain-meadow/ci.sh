@@ -4,8 +4,8 @@ WORKSPACE_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$WORKSPACE_ROOT"
 
 case "$#:${1:-}" in
-    2:verify|2:package) ;;
-    *) printf '%s\n' 'Usage: ci.sh verify|package GAME_REVISION' >&2; exit 2 ;;
+    2:verify|2:test|2:package) ;;
+    *) printf '%s\n' 'Usage: ci.sh verify|test|package GAME_REVISION' >&2; exit 2 ;;
 esac
 revision=$2
 case "$revision" in
@@ -31,9 +31,10 @@ if [ ! -f "$MONO_FRAMEWORK_REFS/Facades/netstandard.dll" ]; then
 fi
 export RAIN_MEADOW_STEAM_PROBE=1 RAIN_MEADOW_STEAM_GAMEPLAY=1 RAIN_MEADOW_STEAM_SDR=1
 
-if [ "$1" = verify ]; then
-    exec sh tools/rain-meadow/stage_candidate.sh --verify-only
-fi
+case "$1" in
+    verify) exec sh tools/rain-meadow/stage_candidate.sh --verify-only ;;
+    test) exec sh tools/rain-meadow/stage_candidate.sh --dll-only "release/Rain-Meadow/$revision/test/Rain Meadow.dll" ;;
+esac
 game_inputs="libs/game/$revision"
 shader_inputs="$game_inputs/shaders"
 mod_overlay="$game_inputs/mod-overlay"

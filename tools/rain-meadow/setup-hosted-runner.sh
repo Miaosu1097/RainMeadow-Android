@@ -6,9 +6,9 @@ cd "$WORKSPACE_ROOT"
 
 mode=${1:-}
 case "$mode" in
-    verify) set -- mono-devel ;;
+    verify|test) set -- mono-devel ;;
     package) set -- mono-devel ffmpeg ;;
-    *) printf '%s\n' 'Usage: setup-hosted-runner.sh verify|package' >&2; exit 2 ;;
+    *) printf '%s\n' 'Usage: setup-hosted-runner.sh verify|test|package' >&2; exit 2 ;;
 esac
 if [ "$mode" = package ]; then
     snapshot="${RAIN_MEADOW_GAME_ARCHIVE%/*}/shaders"
@@ -19,7 +19,7 @@ if [ "$mode" = package ]; then
 fi
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends "$@"
-if [ "$mode" = verify ]; then
+if [ "$mode" != package ]; then
     exit 0
 fi
 

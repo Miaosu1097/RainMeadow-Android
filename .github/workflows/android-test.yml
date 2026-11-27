@@ -1,0 +1,22 @@
+name: Rain Meadow Android Test DLL
+
+on:
+  workflow_dispatch:
+    inputs:
+      game_revision:
+        description: Game snapshot revision
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  test-dll:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/android-run.yml
+    with:
+      game_revision: ${{ inputs.game_revision || vars.RAIN_MEADOW_GAME_REVISION || '1.10' }}
+      build: test
+    secrets:
+      assemblies_token: ${{ secrets.RAIN_MEADOW_ASSEMBLIES_TOKEN }}

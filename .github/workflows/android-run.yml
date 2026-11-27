@@ -48,13 +48,19 @@ jobs:
           token: ${{ secrets.assemblies_token || github.token }}
           ref: ${{ steps.game.outputs.commit }}
           path: work/rain-meadow/assembly-source
-          sparse-checkout: ${{ env.GAME_REVISION }}
+          sparse-checkout: ${{ inputs.build == 'test' && format('/{0}/Managed.zip', env.GAME_REVISION) || env.GAME_REVISION }}
+          sparse-checkout-cone-mode: ${{ inputs.build != 'test' }}
           persist-credentials: false
       - name: Install packages on the GitHub-hosted runner
         if: ${{ runner.environment == 'github-hosted' }}
         run: sh tools/rain-meadow/setup-hosted-runner.sh "$BUILD_MODE"
       - name: Compile for the selected game revision
         run: sh tools/rain-meadow/ci.sh "$BUILD_MODE" "$GAME_REVISION"
+      - name: Attach the test DLL to a draft Release
+        if: ${{ inputs.build == 'test' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: sh tools/rain-meadow/draft-release.sh upload-test "$GAME_REVISION"
       - name: Attach the ZIP and checksum to a draft Release
         if: ${{ inputs.release_tag != '' }}
         env:

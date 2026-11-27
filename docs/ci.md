@@ -26,6 +26,12 @@ Git 主仓库保存源码、文本资源、脚本和输入版本记录。构建�
 
 `RainMeadow-android.zip` 输出到 `release/Rain-Meadow/<游戏版本>/`，`modinfo.json` 和 `plugins/` 位于 ZIP 根目录。SteamKit2 等托管依赖由 NuGet 锁文件固定。程序集仓库的 `1.10` 快照提供 `Managed.zip` 和已验证的 `1.10/shaders/rainmeadow` GLES bundle，托管 runner 会从锁定的提交读取。开场图和缩略图放在快照的 `1.10/mod-overlay/`，打包时覆盖上游默认图片。
 
+## 调试 DLL
+
+在 Actions 手动运行 **Rain Meadow Android Test DLL**，选择要调试的分支和游戏快照。工作流只检出该快照的 `Managed.zip`，使用与正式包相同的托管编译选项和 IL 校验，跳过游戏美术、音频、着色器和原生库打包。在 Releases 的 **Android Test DLL** 草稿中下载 DLL。只有拥有仓库写权限的账号可以看到草稿。[GitHub Release 权限说明](https://docs.github.com/en/rest/releases/releases#list-releases)
+
+已安装匹配的完整模组时，可用下载的 DLL 替换 `plugins/Rain Meadow.dll`。本地可运行 `sh tools/rain-meadow/ci.sh test 1.10`，输出位于 `release/Rain-Meadow/1.10/test/Rain Meadow.dll`。
+
 ## GitHub Release
 
 为准备发布的源码提交创建并推送标签，例如 `v0.1.16.3-android.1`。在 Actions 手动运行 **Rain Meadow Android**，选择与该标签同一提交的 ref，并填写 `release_tag`。当提供标签时，Action 自动走完整打包模式，成功后在源码仓库创建 Release 草稿，并附上 ZIP 和 `.sha256`。可在 Releases 页面编辑说明并发布草稿。只有这条手动路径申请 `contents: write`，使用 Actions 自带 token 上传。[GitHub CLI 的草稿发布](https://cli.github.com/manual/gh_release_create)
