@@ -20,7 +20,7 @@ def workspace_path(value):
 
 def files_in(root):
     for path in sorted(root.rglob("*")):
-        if path.is_file():
+        if path.is_file() and path.name.casefold() != "desktop.ini":
             if path.is_symlink() or not path.resolve().is_relative_to(root):
                 raise ValueError(f"Linked package input: {path}")
             yield path.relative_to(root), path
