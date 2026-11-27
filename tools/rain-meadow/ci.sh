@@ -34,16 +34,24 @@ export RAIN_MEADOW_STEAM_PROBE=1 RAIN_MEADOW_STEAM_GAMEPLAY=1 RAIN_MEADOW_STEAM_
 if [ "$1" = verify ]; then
     exec sh tools/rain-meadow/stage_candidate.sh --verify-only
 fi
-shader_inputs="libs/game/$revision/shaders"
+game_inputs="libs/game/$revision"
+shader_inputs="$game_inputs/shaders"
+mod_overlay="$game_inputs/mod-overlay"
 if [ -n "${RAIN_MEADOW_GAME_ARCHIVE:-}" ]; then
-    snapshot_shaders=$(dirname -- "$RAIN_MEADOW_GAME_ARCHIVE")/shaders
-    if [ -d "$snapshot_shaders" ]; then
-        shader_inputs=$snapshot_shaders
+    snapshot=$(dirname -- "$RAIN_MEADOW_GAME_ARCHIVE")
+    if [ -d "$snapshot/shaders" ]; then
+        shader_inputs="$snapshot/shaders"
     fi
+    if [ -d "$snapshot/mod-overlay" ]; then
+        mod_overlay="$snapshot/mod-overlay"
+    fi
+fi
+if [ -d "$mod_overlay" ]; then
+    export RAIN_MEADOW_MOD_OVERLAY="${RAIN_MEADOW_MOD_OVERLAY:-$mod_overlay}"
 fi
 export RAIN_MEADOW_VALVE_ANDROID_SO="${RAIN_MEADOW_VALVE_ANDROID_SO:-libs/valve/android-arm64/libsteamnetworkingsockets.so}"
 export RAIN_MEADOW_GLES_BUNDLE="${RAIN_MEADOW_GLES_BUNDLE:-$shader_inputs/rainmeadow}"
-export RAIN_MEADOW_RELEASE_ZIP="${RAIN_MEADOW_RELEASE_ZIP:-release/Rain-Meadow/$revision/RainMeadow-android-steam-sdr.zip}"
+export RAIN_MEADOW_RELEASE_ZIP="${RAIN_MEADOW_RELEASE_ZIP:-release/Rain-Meadow/$revision/RainMeadow-android.zip}"
 template=${RAIN_MEADOW_GLES_TEMPLATE:-$shader_inputs/current-gles-template.asset}
 if [ -f "$template" ]; then
     RAIN_MEADOW_ASSET_SOURCE=$(python3 -IB "$inputs" upstream)

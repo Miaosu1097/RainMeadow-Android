@@ -76,7 +76,7 @@ fetch_license() {
         return 1
     fi
 }
-fetch_license https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt SteamKit2-LGPL-2.1.txt
+cp LICENSES/LGPL-2.1.txt "$licenses/SteamKit2-LGPL-2.1.txt"
 fetch_license https://raw.githubusercontent.com/codebude/QRCoder/bd980577640c47f8bb881cf24c8443415a579d36/LICENSE.txt QRCoder-LICENSE.txt
 fetch_license https://raw.githubusercontent.com/protobuf-net/protobuf-net/9618de94145145228e115e8f134f132522e51f88/Licence.txt protobuf-net-LICENSE.txt
 for package in system.buffers/4.5.1 system.collections.immutable/7.0.0 \

@@ -22,7 +22,7 @@ if [ "$1" = check ]; then
 fi
 
 revision=$3
-zip=${RAIN_MEADOW_RELEASE_ZIP:-release/Rain-Meadow/$revision/RainMeadow-android-steam-sdr.zip}
+zip=${RAIN_MEADOW_RELEASE_ZIP:-release/Rain-Meadow/$revision/RainMeadow-android.zip}
 file=$(basename -- "$zip")
 (cd "$(dirname -- "$zip")" && sha256sum "$file" > "$file.sha256")
 notes=$(printf 'Rain Meadow Android ARM64 build for game snapshot %s.\n\nSource commit `%s`.\n' "$revision" "$commit")

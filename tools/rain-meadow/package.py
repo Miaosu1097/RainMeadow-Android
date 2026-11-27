@@ -29,7 +29,7 @@ def files_in(root):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mod", type=workspace_path, required=True)
-    parser.add_argument("--overlay-mod", type=workspace_path)
+    parser.add_argument("--overlay-mod", type=workspace_path, action="append", default=[])
     parser.add_argument("--audio", type=workspace_path, required=True)
     parser.add_argument("--shader", type=workspace_path, required=True)
     parser.add_argument("--plugin", type=workspace_path, required=True)
@@ -60,7 +60,9 @@ def main():
         replacements.update(normalized)
 
     files = {}
-    for mod in filter(None, (args.mod, args.overlay_mod)):
+    for mod in (args.mod, *args.overlay_mod):
+        if not mod.is_dir():
+            parser.error(f"Missing mod asset directory: {mod}")
         files.update({
             path: source for path, source in files_in(mod)
             if path.parts[0] not in {"plugins", "patchers"}
@@ -74,8 +76,8 @@ def main():
     for source in files.values():
         if not source.is_file() or (source in required and source.stat().st_size == 0):
             parser.error(f"Missing candidate input: {source}")
-    inputs = (args.mod, args.overlay_mod, args.audio)
-    if args.output in files.values() or any(args.output.is_relative_to(folder) for folder in filter(None, inputs)):
+    inputs = (args.mod, *args.overlay_mod, args.audio)
+    if args.output in files.values() or any(args.output.is_relative_to(folder) for folder in inputs):
         parser.error("Choose a package path outside the input asset directories")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

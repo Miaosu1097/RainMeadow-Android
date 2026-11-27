@@ -61,7 +61,7 @@ sh tools/rain-meadow/steam/native/run-valve-init.sh
 
 ## Rain Meadow 0.1.16.3 SDR 测试包
 
-在工作区根目录运行 `sh tools/rain-meadow/build-sdr-release.sh`。成品写入 `release/Rain-Meadow/0.1.16.3/RainMeadow-android-steam-sdr.zip`，ZIP 根目录直接包含 `modinfo.json`、`plugins/` 和资源目录。构建会用现有的 GLES 资源，对游戏程序集运行 Android IL 回放。
+在工作区根目录运行 `sh tools/rain-meadow/build-sdr-release.sh`。成品写入 `release/Rain-Meadow/0.1.16.3/RainMeadow-android.zip`，ZIP 根目录直接包含 `modinfo.json`、`plugins/` 和资源目录。构建会用现有的 GLES 资源，对游戏程序集运行 Android IL 回放。
 
 原生库由 `rwmeadow-native-loader.dex` 内的 Java 类通过 `System.load` 在同一个 Android 类加载器命名空间中加载。C# 通过 JNI 桥获取传输函数地址。更新时需要保留 ZIP 中 `plugins/steam-probe/` 下的 DEX 和原生库。构建 DEX 需要 JDK，D8 会缓存到工作区。[Android 原生库加载说明](https://android.googlesource.com/platform/art/+/refs/heads/main/libnativeloader/README.md)
 

@@ -24,7 +24,7 @@ Git 主仓库保存源码、文本资源、脚本和输入版本记录。构建�
 
 只试打包时手动选 `build=package`，将 `release_tag` 留空。该运行只校验打包，ZIP 保留在 runner 工作目录，Action 不上传产物。
 
-ZIP 输出到 `release/Rain-Meadow/<游戏版本>/`，`modinfo.json` 和 `plugins/` 位于 ZIP 根目录。SteamKit2 等托管依赖由 NuGet 锁文件固定。程序集仓库的 `1.10` 快照提供 `Managed.zip` 和已验证的 `1.10/shaders/rainmeadow` GLES bundle，托管 runner 会从锁定的提交读取。
+`RainMeadow-android.zip` 输出到 `release/Rain-Meadow/<游戏版本>/`，`modinfo.json` 和 `plugins/` 位于 ZIP 根目录。SteamKit2 等托管依赖由 NuGet 锁文件固定。程序集仓库的 `1.10` 快照提供 `Managed.zip` 和已验证的 `1.10/shaders/rainmeadow` GLES bundle，托管 runner 会从锁定的提交读取。开场图和缩略图放在快照的 `1.10/mod-overlay/`，打包时覆盖上游默认图片。
 
 ## GitHub Release
 
@@ -36,7 +36,7 @@ ZIP 输出到 `release/Rain-Meadow/<游戏版本>/`，`modinfo.json` 和 `plugin
 
 ## 本地构建和游戏更新
 
-本地可以使用已解包的 `libs/game/<游戏版本>/Managed/`，或者通过 `RAIN_MEADOW_GAME_ARCHIVE` 指定锁定快照中的 `Managed.zip`。
+本地可以使用已解包的 `libs/game/<游戏版本>/Managed/`，或者通过 `RAIN_MEADOW_GAME_ARCHIVE` 指定锁定快照中的 `Managed.zip`。本地打包会从同级的 `shaders/` 和 `mod-overlay/` 读取资源，也支持将这些目录放在 `libs/game/<游戏版本>/` 下。
 
 ```sh
 export RAIN_MEADOW_GAME_ARCHIVE=work/rain-meadow/assembly-source/1.10/Managed.zip
