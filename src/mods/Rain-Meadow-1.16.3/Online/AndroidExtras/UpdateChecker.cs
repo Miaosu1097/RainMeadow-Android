@@ -89,6 +89,7 @@ namespace RainMeadow
         private static string noticeMessage;
         private static string noticeSubtitle;
         private static string noticeVersion;
+        private static string noticeReadKey = "";
         private static List<AnnoncementDialog.ButtonSpec> noticeButtons =
             new List<AnnoncementDialog.ButtonSpec>();
 
@@ -328,18 +329,20 @@ namespace RainMeadow
 
         /// <summary>
         /// Determines whether to display English text.
-        /// The game uses TraditionalChinese for Chinese, including when a Simplified Chinese mod replaces the text.
-        /// All other language settings use English.
+        /// Recognizes the Chinese language identifiers used by the game and Android translations.
         /// </summary>
         private static bool PreferEnglish()
         {
             try
             {
                 var rw = RWCustom.Custom.rainWorld;
-                if (rw != null && rw.options != null)
+                string? language = rw?.options?.language?.value ?? rw?.inGameTranslator?.currentLanguage?.value;
+                return language?.ToLowerInvariant() switch
                 {
-                    return rw.options.language != InGameTranslator.LanguageID.TraditionalChinese;
-                }
+                    null or "" or "chinese" or "simplifiedchinese" or "chinesesimplified" or "simpchinese"
+                        or "traditionalchinese" or "chinesetraditional" or "tradchinese" => false,
+                    _ => true,
+                };
             }
             catch
             {
@@ -366,9 +369,12 @@ namespace RainMeadow
 
             string v = o.Value<string>("version");
             if (string.IsNullOrWhiteSpace(v)) return;
-            if (ReadState("notice") == v) return;
-
             bool en = PreferEnglish();
+            string readKey = v + (en ? ":en" : ":zh");
+            string seen = ReadState("notice");
+            if (seen == readKey || (en && seen == v)) return;
+
+            noticeReadKey = readKey;
             noticeVersion = v;
             noticeTitle = PickLang(o, "title", "title_en", en) ?? (en ? "Notice" : "公告");
             noticeMessage = PickLang(o, "message", "message_en", en) ?? "";
@@ -579,7 +585,7 @@ namespace RainMeadow
                     return;
                 }
 
-                if (hasNotice) WriteState("notice", noticeVersion);
+                if (hasNotice) WriteState("notice", noticeReadKey);
                 if (hasRelease && !relForce) WriteState("release", relLatest);
                 UnityEngine.Debug.Log("[AndroidExtras] notice marked read: " + noticeVersion);
             }
@@ -635,7 +641,7 @@ namespace RainMeadow
                     bool imgGot = textures.Count > 0;
                     if (!imgWanted || imgGot)
                     {
-                        WriteState("notice", noticeVersion);
+                        WriteState("notice", noticeReadKey);
                         WriteState("notice_img_fail", "0");
                     }
                     else
@@ -648,7 +654,7 @@ namespace RainMeadow
                                                      + fails + "/3)");
                         if (fails >= 3)
                         {
-                            WriteState("notice", noticeVersion);
+                            WriteState("notice", noticeReadKey);
                             WriteState("notice_img_fail", "0");
                             UnityEngine.Debug.LogWarning("[AndroidExtras] notice image retry exhausted, marked read without image");
                         }

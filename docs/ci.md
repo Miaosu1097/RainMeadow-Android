@@ -26,6 +26,8 @@ Git 主仓库保存源码、文本资源、脚本和输入版本记录。构建�
 
 `RainMeadow-android.zip` 输出到 `release/Rain-Meadow/<游戏版本>/`，`modinfo.json` 和 `plugins/` 位于 ZIP 根目录。SteamKit2 等托管依赖由 NuGet 锁文件固定。程序集仓库的 `1.10` 快照提供 `Managed.zip` 和已验证的 `1.10/shaders/rainmeadow` GLES bundle，托管 runner 会从锁定的提交读取。开场图和缩略图放在快照的 `1.10/mod-overlay/`，打包时覆盖上游默认图片。
 
+完整包还会从 `assets/rain-meadow/capes.txt` 放入离线披风名单。这份文本固定在 MeadowCosmetics16 提交 `8c4deab817ff5cd0f639d503fa79c6ade64dfc46`，其 Git blob 与上游一致。游戏可以在运行时刷新安装目录中的副本。[上游名单快照](https://github.com/invalidunits/MeadowCosmetics16/blob/8c4deab817ff5cd0f639d503fa79c6ade64dfc46/capes.txt)
+
 ## 调试 DLL
 
 在 Actions 手动运行 **Rain Meadow Android Test DLL**，选择要调试的分支和游戏快照。工作流只检出该快照的 `Managed.zip`，使用与正式包相同的托管编译选项和 IL 校验，跳过游戏美术、音频、着色器和原生库打包。在 Releases 的 **Android Test DLL** 草稿中下载 DLL。只有拥有仓库写权限的账号可以看到草稿。[GitHub Release 权限说明](https://docs.github.com/en/rest/releases/releases#list-releases)

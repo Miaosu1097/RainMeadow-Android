@@ -228,22 +228,12 @@ namespace RainMeadow
                     string commithashlocal = string.Empty;
                     if (File.Exists(cape_hash_file)) commithashlocal = File.ReadAllText(cape_hash_file);
 
-                    // Only download the new capes when the hashes don't match.
-                    if (commithash != commithashlocal)
+                    if (commithash != commithashlocal || !File.Exists(capes_txt))
                     {
-                        RainMeadow.Debug("Local hash doesn't match, downloading remote.");
-                        using (FileStream stream = File.Create(cape_hash_file))
-                        using (StreamWriter writer = new(stream))
-                        {
-                            writer.Write(commithash);
-                        }
-
-                        string response = client.DownloadString(capes_remote_txt);
-                        using (FileStream stream = File.Create(capes_txt))
-                        using (StreamWriter writer = new(stream))
-                        {
-                            writer.WriteLine(response);
-                        }
+                        string response = await client.DownloadStringTaskAsync(capes_remote_txt);
+                        if (string.IsNullOrWhiteSpace(response)) return;
+                        File.WriteAllText(capes_txt, response);
+                        File.WriteAllText(cape_hash_file, commithash);
                     }
                 }
             }
@@ -260,10 +250,11 @@ namespace RainMeadow
             var capes_txt = Path.Combine(ModManager.GetModById("henpemaz_rainmeadow").path, "capes.txt");
             RainMeadow.DebugMe();
 
-            // process capes from file.
-            using (FileStream capefile = File.OpenRead(capes_txt))
-            using (StreamReader capestream = new StreamReader(capefile))
+            // The cosmetics cache is optional on a fresh or offline installation.
+            if (!File.Exists(capes_txt)) return;
+            try
             {
+                using var capestream = File.OpenText(capes_txt);
                 while (true)
                 {
                     var line = capestream.ReadLine();
@@ -289,6 +280,11 @@ namespace RainMeadow
                         entries.Add(HashedsteamId64, cosmetics);
                     }
                 }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                entries.Clear();
+                RainMeadow.Warn($"Could not read the optional cosmetics cache: {error.Message}");
             }
         }
 

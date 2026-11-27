@@ -39,6 +39,7 @@ def main():
 
     replacements = {
         BUNDLE: args.shader,
+        Path("capes.txt"): ROOT / "assets/rain-meadow/capes.txt",
         Path("plugins/Rain Meadow.dll"): args.plugin,
         Path("plugins/Newtonsoft.Json.dll"): ROOT / "libs/rain-meadow/Newtonsoft.Json.dll",
         Path("Newtonsoft.Json.LICENSE.md"): ROOT / "libs/rain-meadow/Newtonsoft.Json.LICENSE.md",
