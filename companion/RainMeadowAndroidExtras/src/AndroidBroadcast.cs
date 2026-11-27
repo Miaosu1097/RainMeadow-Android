@@ -14,15 +14,15 @@ using UnityEngine.Networking;
 namespace RainMeadowAndroidExtras
 {
     /// <summary>
-    /// Rain Meadow 安卓移植版扩展插件。
+    /// Standalone Rain Meadow Android Extras plugin.
     ///
-    /// 提供两项能力，二者均已在下面独立实现，不依赖修改 Rain Meadow 本体：
-    ///   1. 平台标识广播：仅 Android 生效，向房间内其他参与者上报「我是移植端」
-    ///   2. 自动更新与公告：检查仓库 version.json，有新版本时在主菜单弹窗
+    /// Provides these features as a separate plugin:
+    ///   1. Platform marker broadcasts for Android clients in an online lobby.
+    ///   2. Announcements and update prompts based on the repository manifest.
     ///
-    /// 之所以做成独立插件（而不是改 Rain Meadow 源码），是因为：
-    ///   - 移植版本体源码使用了 C# 14 的 extension 语法，需要 Roslyn 5+ 才能编译
-    ///   - 独立插件只需引用已编译好的 Rain Meadow.dll，用常规 Roslyn 即可
+    /// Standalone build requirements:
+    ///   - The Meadow source uses C# 14 extension blocks and needs Roslyn 5 or newer.
+    ///   - This plugin compiles against the already-built Rain Meadow assembly.
     /// </summary>
     [BepInPlugin(Guid, Name, Version)]
     [BepInDependency("henpemaz.rainmeadow")]
@@ -38,10 +38,10 @@ namespace RainMeadowAndroidExtras
         {
             Instance = this;
 
-            // 1) 先把上次下载好的新版本替换进去（必须在 Rain Meadow 加载前完成）
+            // Apply staged files at plugin startup.
             UpdateChecker.ApplyPendingUpdate();
 
-            // 2) 等 Rain Meadow 初始化完成后接入
+            // Install the extensions after Meadow initializes.
             On.RainWorld.OnModsInit += RainWorld_OnModsInit;
         }
 
@@ -62,10 +62,10 @@ namespace RainMeadowAndroidExtras
     }
 
     /// <summary>
-    /// 移植端平台标识广播。
-    /// 通过 Rain Meadow 内置的 CustomManager（CustomPacket）上报，按字符串 key 路由，
-    /// 与程序集版本无关；未订阅该 key 的客户端会静默丢弃，不会报错。
-    /// 桌面端不注册任何 hook。
+    /// Sends the Android platform marker.
+    /// Rain Meadow's CustomManager routes CustomPacket messages using a string key.
+    /// Clients without a matching subscription ignore the packet.
+    /// Desktop clients skip broadcast hook registration.
     /// </summary>
     internal static class AndroidBroadcast
     {
@@ -87,7 +87,7 @@ namespace RainMeadowAndroidExtras
             installed = true;
 
             if (Application.platform != RuntimePlatform.Android)
-                return; // 桌面端不注册任何东西
+                return; // Desktop clients skip broadcast hook registration.
 
             On.RainWorld.Update += RainWorld_Update;
             Debug.Log("[Extras] broadcast installed, key=" + BroadcastKey.PacketKey);
@@ -133,7 +133,7 @@ namespace RainMeadowAndroidExtras
             if (Time.realtimeSinceStartup < nextCheck) return;
             nextCheck = Time.realtimeSinceStartup + CheckInterval;
 
-            // 清理已离开的对端
+            // Remove peers that have left the lobby.
             sent.RemoveWhere(p => p == null || p.hasLeft || !lobby.participants.Contains(p));
 
             List<OnlinePlayer> stale = null;
@@ -164,9 +164,9 @@ namespace RainMeadowAndroidExtras
         }
 
         /// <summary>
-        /// 向单个对端发送。
-        /// Rain Meadow 的 OnlineManager.SendCustomData 在对端尚未同步该 key 时会静默 return，
-        /// 因此先本地检查，避免白白消耗重试次数。
+        /// Sends the marker to a single peer.
+        /// Meadow skips sending while the peer's subscription is still synchronizing.
+        /// Check the subscription locally before using a retry attempt.
         /// </summary>
         private static bool TrySend(Lobby lobby, OnlinePlayer player)
         {

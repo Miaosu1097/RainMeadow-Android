@@ -42,6 +42,9 @@ def main():
         Path("plugins/Rain Meadow.dll"): args.plugin,
         Path("plugins/Newtonsoft.Json.dll"): ROOT / "libs/rain-meadow/Newtonsoft.Json.dll",
         Path("Newtonsoft.Json.LICENSE.md"): ROOT / "libs/rain-meadow/Newtonsoft.Json.LICENSE.md",
+        Path("LICENSE"): ROOT / "LICENSE",
+        Path("licenses/MIT.txt"): ROOT / "LICENSES/MIT.txt",
+        Path("licenses/JZlib.txt"): ROOT / "src/mods/Rain-Meadow-1.16.3/Utils/zlib/LICENSE.jzlib.txt",
     }
     if args.steam_probe:
         for folder, destination in (("plugins", "plugins/steam-probe"), ("licenses", "licenses/steam-probe")):

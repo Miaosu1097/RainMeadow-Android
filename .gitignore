@@ -11,5 +11,5 @@ __pycache__/
 *.log
 .env
 
-# 协议常量（真实值）不纳入版本控制，只提交 .example 模板
+# Keep local protocol settings for the standalone Extras plugin out of Git.
 companion/RainMeadowAndroidExtras/src/BroadcastKey.cs

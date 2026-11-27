@@ -5,8 +5,8 @@ using BepInEx;
 namespace KickAndroid
 {
     /// <summary>
-    /// 日志模块。写入游戏根目录的 KickAndroid.log。
-    /// 仅在房主启用日志时记录（静默模式不写业务日志，但加载期日志照常写）。
+    /// Writes KickAndroid.log in the game directory.
+    /// Initialization messages can be logged before the host enables event logging.
     /// </summary>
     public static class ModLogger
     {
@@ -43,7 +43,7 @@ namespace KickAndroid
             }
             catch
             {
-                // 忽略：日志写入失败不影响主功能
+                // Ignore file logging failures.
             }
         }
     }

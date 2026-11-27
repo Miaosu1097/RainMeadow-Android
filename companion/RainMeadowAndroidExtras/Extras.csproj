@@ -10,11 +10,11 @@
   </PropertyGroup>
 
   <!--
-    GameManaged   : 游戏的 Managed 目录（含 Assembly-CSharp.dll / BepInEx.dll / UnityEngine*.dll）
-    RainMeadowDll : 编译好的 Rain Meadow.dll（手机版编译产物）
+    GameManaged   : Game Managed directory containing Assembly-CSharp.dll, BepInEx.dll, and UnityEngine DLLs.
+    RainMeadowDll : Compiled Android Rain Meadow assembly.
     NewtonsoftDll : Newtonsoft.Json.dll
 
-    三者都是二进制，不纳入版本控制；本地/CI 构建时用 -p: 传入。
+    Pass these external build inputs with -p: when building the standalone plugin.
   -->
   <PropertyGroup>
     <GameManaged Condition="'$(GameManaged)' == ''">libs/game/Managed</GameManaged>
@@ -32,9 +32,9 @@
       <HintPath>$(GameManaged)/BepInEx.dll</HintPath>
       <Private>false</Private>
       <!--
-        Assembly-CSharp.dll 内嵌了 BepInEx 的 shim（BaseUnityPlugin / BepInPlugin 等同名类型），
-        直接引用会与真正的 BepInEx.dll 冲突（CS0433）。用别名隔离。
-        源码里相应使用：extern alias bepinex;  using bepinex::BepInEx;
+        Assembly-CSharp.dll includes a BepInEx shim with types such as BaseUnityPlugin and BepInPlugin.
+        Use a reference alias to avoid duplicate type errors (CS0433).
+        The source uses extern alias bepinex and imports bepinex::BepInEx.
       -->
       <Aliases>bepinex</Aliases>
     </Reference>
@@ -68,7 +68,7 @@
     </Reference>
   </ItemGroup>
 
-  <!-- 打包成可直接投放的模组目录：<OutDir>mod/RainMeadowAndroidExtras/{modinfo.json,plugins/} -->
+  <!-- Stage an installable mod under the build output directory. -->
   <Target Name="PackMod" AfterTargets="Build">
     <PropertyGroup>
       <ModOutDir>$(OutputPath)mod/RainMeadowAndroidExtras/</ModOutDir>

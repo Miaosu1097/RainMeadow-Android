@@ -8,24 +8,24 @@ using UnityEngine.Networking;
 namespace RainMeadow
 {
     /// <summary>
-    /// 移植端（安卓）平台标识广播。
+    /// Broadcasts the Android platform marker.
     ///
-    /// 通过 Rain Meadow 内置的 CustomManager（CustomPacket）上报，按字符串 key 路由，
-    /// 与程序集版本无关；未订阅该 key 的客户端会静默丢弃，不会报错。
+    /// Rain Meadow's CustomManager routes CustomPacket messages by string key.
+    /// Clients without a matching subscription ignore the packet.
     ///
-    /// 行为：进入房间后静默 3 秒，此后每 5 秒向房间内每个对端发一次极小的标识包。
-    /// 对端的反制模组自行去重（同房间内同一玩家只播报一次，离开再进会重新播报）。
+    /// Waits briefly after joining, then sends the marker to subscribed peers every five seconds.
+    /// Receivers can deduplicate reports for each player's current lobby visit.
     ///
-    /// 桌面端不注册任何 hook。
+    /// Desktop clients skip broadcast hook registration.
     /// </summary>
     internal static class AndroidBroadcast
     {
-        /// <summary>广播周期：静默期结束后，每隔这么久向房间内所有对端发一次。</summary>
+        /// <summary>Interval between broadcasts once the initial delay has passed.</summary>
         private const float CheckInterval = 5f;
 
         /// <summary>
-        /// 进入房间后先静默这么久再开始广播。
-        /// 加入流程里有状态同步 / checksum 校验，此时插入额外数据包存在时序风险。
+        /// Initial delay after joining a lobby.
+        /// The join flow uses state synchronization and checksum validation.
         /// </summary>
         private const float StartupDelay = 3f;
 
@@ -36,7 +36,7 @@ namespace RainMeadow
         private static float lobbyReadyAt = -1f;
         private static Lobby lastLobby;
 
-        // 仅用于日志：首次成功发给某个对端时单独记录一条，之后只打每轮汇总
+        // Track each peer's first successful send for logging, then summarize subsequent rounds.
         private static readonly HashSet<OnlinePlayer> firstSent = new HashSet<OnlinePlayer>();
 
         internal static void Install()
@@ -47,7 +47,7 @@ namespace RainMeadow
             if (Application.platform != RuntimePlatform.Android)
             {
                 UnityEngine.Debug.Log("[AndroidExtras] broadcast skipped (platform=" + Application.platform + ")");
-                return; // 桌面端不注册任何东西
+                return; // Desktop clients skip broadcast hook registration.
             }
 
             On.RainWorld.Update += RainWorld_Update;
@@ -95,7 +95,7 @@ namespace RainMeadow
                 UnityEngine.Debug.Log("[AndroidExtras] lobby entered; broadcast silent " + StartupDelay + "s");
             }
 
-            // 加入流程刚结束的窗口内保持静默，避免额外数据包干扰状态同步
+            // Allow the initial state synchronization to finish before sending markers.
             if (lobbyReadyAt >= 0f && Time.realtimeSinceStartup - lobbyReadyAt < StartupDelay) return;
 
             if (Time.realtimeSinceStartup < nextCheck) return;
@@ -120,7 +120,7 @@ namespace RainMeadow
                 }
             }
 
-            // 每轮只打一条汇总，避免 5 秒一次 × 人数 把日志刷爆
+            // Log a single summary per broadcast round.
             if (sentNow > 0)
             {
                 UnityEngine.Debug.Log("[AndroidExtras] broadcast round: sent=" + sentNow
@@ -129,9 +129,9 @@ namespace RainMeadow
         }
 
         /// <summary>
-        /// 向单个对端发送。
-        /// 对端尚未同步该 key（没装反制模组 / 握手还没完成）时返回 false，
-        /// 下个周期自动重试——这一步是纯本地字典查询，不产生任何网络流量。
+        /// Sends the marker to one peer.
+        /// Returns false until the peer's subscription has been synchronized.
+        /// The subscription check is local and the next broadcast round retries it.
         /// </summary>
         private static bool TrySend(Lobby lobby, OnlinePlayer player)
         {

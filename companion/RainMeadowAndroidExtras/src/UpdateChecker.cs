@@ -13,24 +13,24 @@ using UnityEngine.Networking;
 namespace RainMeadowAndroidExtras
 {
     /// <summary>
-    /// 自动更新与公告。
+    /// Announcement and update checker for the standalone Extras plugin.
     ///
-    /// 数据源：仓库根目录的 version.json（raw.githubusercontent.com，不占 GitHub API 限额）：
+    /// The standalone checker reads the manifest from this URL:
     ///   { "latest": "0.1.16.4", "force": false, "notes": "...", "download": "https://..." }
     ///
-    /// 流程：
-    ///   1. 启动时异步拉取（不阻塞）
-    ///   2. 等进入主菜单后才弹窗（OnModsInit 阶段 Menu 尚未初始化，弹不出来）
-    ///   3. 版本更新 → 弹窗显示版本号与更新内容
-    ///        force=false → 「忽略此次」+「更新」
-    ///        force=true  → 只有「更新」
-    ///   4. 点「更新」→ 下载到 RainMeadow/plugins/Rain Meadow.dll.new → 提示重启
-    ///      下载失败 → 打开直链；再失败 → 打开仓库页面
-    ///   5. 下次启动的最早期（ExtrasPlugin.OnEnable）把 .new 换成正式文件
+    /// Update flow:
+    ///   1. Fetch the manifest asynchronously.
+    ///   2. Wait for the menu before showing the dialog.
+    ///   3. Show the new version and its update notes.
+    ///        force=false allows the player to skip the download.
+    ///        force=true starts the download from the first dialog's action.
+    ///   4. Stage the downloaded file as .new and prompt for a restart.
+    ///      If necessary, open the download link or the repository page.
+    ///   5. Apply staged files when the plugin starts again.
     /// </summary>
     internal static class UpdateChecker
     {
-        // ---- 可配置项 ----
+        // ---- Configuration ----
         private const string VersionUrl =
             "https://raw.githubusercontent.com/Miaosu1097/RainMeadow-Android/main/version.json";
         private const string RepoUrl =
@@ -40,7 +40,7 @@ namespace RainMeadowAndroidExtras
         private static readonly string StatePath =
             Path.Combine(Paths.ConfigPath, "RainMeadowAndroid.update.txt");
 
-        // ---- 运行时状态 ----
+        // ---- Runtime state ----
         private static RainWorld rainWorldHost;
         private static bool installed;
         private static bool fetchStarted;
@@ -62,11 +62,11 @@ namespace RainMeadowAndroidExtras
             On.RainWorld.Update += RainWorld_Update;
         }
 
-        // ---------- 启动时替换已下载的新版本 ----------
+        // ---------- Apply staged updates on startup ----------
 
         /// <summary>
-        /// 把 plugins 目录下的 *.new 替换成正式文件。
-        /// 由 ExtrasPlugin.OnEnable 尽早调用：此时 Rain Meadow.dll 尚未被加载，文件可替换。
+        /// Replaces files staged as *.new in the plugins directory.
+        /// ExtrasPlugin.OnEnable calls this during initialization.
         /// </summary>
         internal static void ApplyPendingUpdate()
         {
@@ -100,20 +100,20 @@ namespace RainMeadowAndroidExtras
             }
         }
 
-        /// <summary>Rain Meadow 的 plugins 目录。找不到时返回 null。</summary>
+        /// <summary>Returns the Meadow plugins directory if it can be located.</summary>
         private static string PluginDir()
         {
             try
             {
-                // PluginPath 通常是 .../BepInEx/plugins 或 mods 目录；Rain Meadow 在 <mods>/RainMeadow/plugins
+                // Check beside the BepInEx plugins or mods directory.
                 var baseDir = Path.GetDirectoryName(Paths.PluginPath.TrimEnd('/', '\\'));
                 if (baseDir == null) return null;
 
-                // 常见布局：<游戏>/RainMeadow/plugins
+                // Check RainMeadow/plugins under the game directory.
                 var candidate = Path.Combine(baseDir, "RainMeadow", "plugins");
                 if (Directory.Exists(candidate)) return candidate;
 
-                // 直接位于 plugins 同级
+                // Check the directory containing this plugin.
                 return Path.Combine(Paths.PluginPath, "RainMeadow", "plugins");
             }
             catch
@@ -122,7 +122,7 @@ namespace RainMeadowAndroidExtras
             }
         }
 
-        // ---------- 检查 ----------
+        // ---------- Check ----------
 
         private static void RainWorld_Update(On.RainWorld.orig_Update orig, RainWorld self)
         {
@@ -178,7 +178,7 @@ namespace RainMeadowAndroidExtras
                 string ver = json.Value<string>("latest");
                 if (string.IsNullOrWhiteSpace(ver)) yield break;
 
-                // 复用 Rain Meadow 自带的版本比较
+                // Use the Meadow version comparator.
                 if (!RainMeadow.RainMeadow.IsNewerVersion(ver, RainMeadow.RainMeadow.MeadowVersionStr))
                     yield break;
 
@@ -195,7 +195,7 @@ namespace RainMeadowAndroidExtras
             }
         }
 
-        // ---------- 弹窗 ----------
+        // ---------- Dialogs ----------
 
         private static void ShowDialog(RainWorld self)
         {
@@ -214,8 +214,8 @@ namespace RainMeadowAndroidExtras
                         ? "\n\n此版本为强制更新，点击确定开始下载。"
                         : "\n\n点击确定开始下载；如需稍后再提醒，关闭本窗口即可。");
 
-                // DialogNotify 只有单个确定按钮。
-                // 非强制更新时，确定后再弹一步询问，让用户有机会取消本次下载。
+                // DialogNotify provides one confirmation button.
+                // For an optional update, show a second prompt so the player can cancel.
                 Action onOk = () =>
                 {
                     if (latestForce)
@@ -239,7 +239,7 @@ namespace RainMeadowAndroidExtras
             }
         }
 
-        // ---------- 下载 ----------
+        // ---------- Download ----------
 
         private static void BeginDownload()
         {
@@ -261,7 +261,7 @@ namespace RainMeadowAndroidExtras
 
             Directory.CreateDirectory(dir);
 
-            // target 为空时默认替换 Rain Meadow.dll
+            // Default to updating Rain Meadow.dll when target is empty.
             string fileName = string.IsNullOrWhiteSpace(latestTarget) ? "Rain Meadow.dll" : latestTarget;
             string target = Path.Combine(dir, fileName + ".new");
 
@@ -308,7 +308,7 @@ namespace RainMeadowAndroidExtras
             }
         }
 
-        // ---------- 工具 ----------
+        // ---------- Utilities ----------
 
         private static void OpenUrl(string url)
         {

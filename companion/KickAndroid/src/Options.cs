@@ -3,25 +3,25 @@ using Menu.Remix;
 namespace KickAndroid
 {
     /// <summary>
-    /// Remix 配置项。
-    /// 全部默认值 = 温和配置（踢出但不封禁、仅房主可见、显示玩家名）。
+    /// Remix configuration options.
+    /// Defaults kick without banning, show notifications locally, and include the player name.
     /// </summary>
     public static class Options
     {
-        // ---- 处理方式 ----
-        public const string ModeKick = "KICK";                 // 踢出（不播报）
-        public const string ModeKickNotify = "KICK_NOTIFY";    // 踢出并播报
-        public const string ModeNotifyOnly = "NOTIFY_ONLY";    // 仅播报
-        public const string ModeSilent = "SILENT";             // 静默（仅写日志）
+        // ---- Actions ----
+        public const string ModeKick = "KICK";                 // Kick without a notification.
+        public const string ModeKickNotify = "KICK_NOTIFY";    // Kick and notify.
+        public const string ModeNotifyOnly = "NOTIFY_ONLY";    // Notify only.
+        public const string ModeSilent = "SILENT";             // Log only.
 
         public static readonly string[] ModeNames =
         {
             ModeKick, ModeKickNotify, ModeNotifyOnly, ModeSilent
         };
 
-        // ---- 播报可见范围 ----
-        public const string ScopeHostOnly = "HOST_ONLY";       // 仅房主可见
-        public const string ScopeEveryone = "EVERYONE";        // 所有人可见
+        // ---- Notification visibility ----
+        public const string ScopeHostOnly = "HOST_ONLY";       // Visible to the lobby owner.
+        public const string ScopeEveryone = "EVERYONE";        // Visible to all lobby participants.
 
         public static readonly string[] ScopeNames =
         {
@@ -66,7 +66,7 @@ namespace KickAndroid
                     "Write detected players and actions to KickAndroid.log in the game folder."));
         }
 
-        // ---- 便捷读取（配置未绑定时返回安全默认值）----
+        // ---- Option values with defaults before binding ----
 
         public static string Mode
         {

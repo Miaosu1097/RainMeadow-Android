@@ -22,6 +22,8 @@ Git 主仓库保存源码、文本资源、脚本和输入版本记录。构建�
 - `package` 还从固定的上游 Meadow 提交取得 `Mod/` 和 `Shaders/`，校验文件内容并叠加仓库中的 Android 文本改动。Valve 原版输入优先使用 `libs/valve/android-arm64/libsteamnetworkingsockets.so`，缺少时从固定的 Steam CDN 归档取得。构建会校验归档和库，编译 ARM64 桥接库与 DEX，并通过 FFmpeg 验证音频。自托管 Linux runner 需提供 Android NDK、JDK 17+ 和 FFmpeg，设置 `ANDROID_NDK_HOME` 与 `JAVA_HOME`。Termux 可使用现有的 clang++ 和 libc++。[NDK 交叉编译文档](https://developer.android.com/ndk/guides/other_build_systems)
 - 要在 `package` 时编译 GLES bundle，提供该游戏版本的 `libs/game/<游戏版本>/shaders/current-gles-template.asset`，并为 runner 准备 UnityPy 1.25.3、`vkd3d-compiler`、`spirv-cross`、`spirv-val` 和 `glslangValidator`。已有验证过的 bundle 也可放在同目录的 `rainmeadow`。如果程序集仓库的固定版本目录已提供 `shaders/`，Action 优先使用该目录。GitHub 托管 runner 会在发现该目录的模板时自动安装 Shader 编译工具和 UnityPy。可通过 `RAIN_MEADOW_GLES_TEMPLATE` 或 `RAIN_MEADOW_GLES_BUNDLE` 指定输入，通过 `RAIN_MEADOW_VKD3D` 和 `RAIN_MEADOW_SPIRV_CROSS` 指定编译工具。
 
+只试打包时手动选 `build=package`，将 `release_tag` 留空。该运行只校验打包，ZIP 保留在 runner 工作目录，Action 不上传产物。
+
 ZIP 输出到 `release/Rain-Meadow/<游戏版本>/`，`modinfo.json` 和 `plugins/` 位于 ZIP 根目录。SteamKit2 等托管依赖由 NuGet 锁文件固定。程序集仓库的 `1.10` 快照提供 `Managed.zip` 和已验证的 `1.10/shaders/rainmeadow` GLES bundle，托管 runner 会从锁定的提交读取。
 
 ## GitHub Release
@@ -34,11 +36,11 @@ ZIP 输出到 `release/Rain-Meadow/<游戏版本>/`，`modinfo.json` 和 `plugin
 
 ## 本地构建和游戏更新
 
-本地可以使用已解包的 `libs/game/<游戏版本>/Managed/`，或者传入私库中已固定版本的 ZIP。
+本地可以使用已解包的 `libs/game/<游戏版本>/Managed/`，或者通过 `RAIN_MEADOW_GAME_ARCHIVE` 指定锁定快照中的 `Managed.zip`。
 
 ```sh
-RAIN_MEADOW_GAME_ARCHIVE=work/rain-meadow/assembly-source/1.10/Managed.zip \
-  sh tools/rain-meadow/ci.sh verify 1.10
+export RAIN_MEADOW_GAME_ARCHIVE=work/rain-meadow/assembly-source/1.10/Managed.zip
+sh tools/rain-meadow/ci.sh verify 1.10
 sh tools/rain-meadow/ci.sh package 1.10
 ```
 

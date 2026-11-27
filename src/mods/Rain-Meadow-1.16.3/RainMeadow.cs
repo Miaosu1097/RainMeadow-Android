@@ -32,7 +32,7 @@ namespace RainMeadow
         {
             try
             {
-                // 移植端扩展：先应用上次下载好的更新（必须在资源加载前）
+                // Apply any staged updates before loading mod resources.
                 AndroidExtras.ApplyPendingUpdate();
 
                 instance = this;

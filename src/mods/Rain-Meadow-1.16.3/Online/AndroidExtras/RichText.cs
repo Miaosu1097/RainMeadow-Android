@@ -6,18 +6,18 @@ using UnityEngine;
 namespace RainMeadow
 {
     /// <summary>
-    /// 极简富文本解析。
+    /// Parses the announcement's inline formatting.
     ///
-    /// 支持：
-    ///   **文字**            粗体（改用 DisplayFont）
-    ///   [color]文字[/color]  颜色，color 可为：
+    /// Supported markup:
+    ///   **text**            Bold text rendered in DisplayFont
+    ///   [color]text[/color] Colored text with the following color formats:
     ///                          red/green/blue/yellow/cyan/magenta/white/gray
     ///                          #RRGGBB
-    ///   [big]文字[/big]      放大到 1.35 倍
-    ///   \n                   换行
+    ///   [big]text[/big]     Text at 1.35 times the normal size
+    ///   \n                   Line break
     ///
-    /// 不支持斜体：Futile 的 FLabel 没有 skew，游戏字体也没有斜体变体。
-    /// 遇到 *文字* 会原样输出（不解析）。
+    /// Futile's FLabel and the game fonts provide no italic styling.
+    /// The parser leaves *text* as literal text.
     /// </summary>
     internal static class RichText
     {
@@ -60,7 +60,7 @@ namespace RainMeadow
             {
                 char c = input[i];
 
-                // ---- 换行 ----
+                // ---- Line break ----
                 if (c == '\n')
                 {
                     Flush(result, buffer, state);
@@ -69,7 +69,7 @@ namespace RainMeadow
                     continue;
                 }
 
-                // ---- **粗体** ----
+                // ---- **Bold text** ----
                 if (c == '*' && i + 1 < input.Length && input[i + 1] == '*')
                 {
                     Flush(result, buffer, state);
@@ -86,7 +86,7 @@ namespace RainMeadow
                     {
                         string tag = input.Substring(i + 1, close - i - 1).Trim();
 
-                        // 结束标签 [/xxx]
+                        // Closing tag [/tag].
                         if (tag.StartsWith("/"))
                         {
                             string name = tag.Substring(1).Trim().ToLowerInvariant();
@@ -116,7 +116,7 @@ namespace RainMeadow
                                 continue;
                             }
 
-                            // [color=red] 或 [red]
+                            // Color tags can use either form.
                             Color parsed;
                             string colorName = tag;
                             int eq = tag.IndexOf('=');
@@ -187,7 +187,7 @@ namespace RainMeadow
             internal float scale = 1f;
         }
 
-        /// <summary>去掉所有标记，只留纯文本（用于测量或降级显示）。</summary>
+        /// <summary>Strips formatting for measurement or plain text display.</summary>
         internal static string StripMarkup(string input)
         {
             if (string.IsNullOrEmpty(input)) return "";

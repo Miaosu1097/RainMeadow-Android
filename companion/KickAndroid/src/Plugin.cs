@@ -5,12 +5,12 @@ using RainMeadow;
 namespace KickAndroid
 {
     /// <summary>
-    /// 「禁止移植版 / Kick Android」入口。
+    /// Plugin entry point for Kick Android.
     ///
-    /// 设计原则：
-    ///   - 仅房主生效。非房主不注册任何 hook、不订阅任何事件、不广播任何信息，彻底静默。
-    ///   - 检测来源：Rain Meadow CustomPacket（主）+ Platform Marker 事件（兼容）。
-    ///   - 其他玩家无需安装本模组；房主选择「所有人可见」时，播报通过原版聊天送达全房。
+    /// Activation:
+    ///   - Only the lobby owner activates the detection and notification hooks.
+    ///   - The primary source is a Rain Meadow custom packet. The legacy Platform Marker event is also supported.
+    ///   - Lobby-wide notifications use base game chat and are visible without another mod installation.
     /// </summary>
     [BepInPlugin(PluginInfo.GUID, PluginInfo.NAME, PluginInfo.VERSION)]
     [BepInDependency("henpemaz.rainmeadow")]
@@ -33,7 +33,7 @@ namespace KickAndroid
         {
             orig(self);
 
-            // 配置只绑定一次
+            // Bind the configuration once.
             if (!initialized)
             {
                 initialized = true;
@@ -43,7 +43,7 @@ namespace KickAndroid
                     if (oi != null)
                     {
                         Options.BindAll(oi);
-                        // 关键：配置加载发生在 OnModsInit 之后，必须手动 Reload 才能读到用户保存的值
+                        // Reload the saved values because options load after OnModsInit.
                         oi.config.Reload();
                         ModLogger.Info("Remix options bound");
                     }
@@ -58,13 +58,13 @@ namespace KickAndroid
                 }
             }
 
-            // 每次回到模组初始化阶段（换大厅等）都重新判定一次房主身份
+            // Recheck lobby ownership whenever mod initialization runs.
             TryActivateAsHost();
         }
 
         /// <summary>
-        /// 判定当前是否为房主；是则激活功能，否则保持完全静默。
-        /// 由于进入房间晚于 OnModsInit，这里挂到游戏循环里反复检查。
+        /// Activates the detector if the local player owns the lobby.
+        /// The game-loop hook waits for joining to complete after OnModsInit.
         /// </summary>
         private void TryActivateAsHost()
         {
@@ -79,7 +79,7 @@ namespace KickAndroid
 
                 if (!isHost)
                 {
-                    // 非房主：彻底静默（只记一条日志便于排查），不注册任何东西
+                    // Record the skip without activating the detector.
                     if (!hostChecked)
                     {
                         hostChecked = true;
@@ -104,7 +104,7 @@ namespace KickAndroid
 
         private void Update()
         {
-            // 进入/离开房间时反复确认；激活后不再重复
+            // Recheck ownership when entering or leaving a lobby until activated.
             if (!activated)
                 TryActivateAsHost();
         }

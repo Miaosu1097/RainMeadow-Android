@@ -1,8 +1,8 @@
 ﻿namespace RainMeadow
 {
     /// <summary>
-    /// 广播协议常量。
-    /// 必须与房主端反制模组（companion/KickAndroid 的 BroadcastKey）完全一致。
+    /// Protocol constants for the platform marker.
+    /// Keep these values consistent with compatible receivers.
     /// </summary>
     internal static class BroadcastKey
     {

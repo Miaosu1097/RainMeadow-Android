@@ -6,7 +6,7 @@
 
 [![Build](https://img.shields.io/badge/build-GitHub%20Actions-blue?style=flat-square)](.github/workflows/android-build.yml)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
-[![Game](https://img.shields.io/badge/Rain%20World-v1.11.8-orange?style=flat-square)]()
+[![Game](https://img.shields.io/badge/Android%20snapshot-1.10-orange?style=flat-square)](docs/ci.md)
 [![Meadow](https://img.shields.io/badge/Rain%20Meadow-0.1.16.3-purple?style=flat-square)]()
 
 </div>
@@ -17,15 +17,14 @@
 
 把 Rain Meadow（雨甸）整套联机引擎搬到 Android 上，让手机玩家能和电脑玩家同房游戏。
 
-除了移植本体，仓库还额外提供自研组件：
+移植版内置以下组件：
 
 | 组件 | 作用 | 位置 |
 |:--|:--|:--|
 | **平台标识广播** | 安卓端在房间里上报自己是移植端，供房主端反制模组识别 | [`companion/RainMeadowAndroidExtras`](companion/RainMeadowAndroidExtras) |
-| **更新公告** | 启动时检查仓库版本，过期则在主菜单弹窗，支持强制更新与自动替换 | 同上 |
+| **更新公告** | 在菜单中显示新版提示和玩家公告 | [更新说明](docs/update.md) |
 
-> 两者以**独立 BepInEx 插件**形式存在，不修改 Rain Meadow 本体源码 ——
-> 因此不会破坏与官方桌面版的协议互通。
+当前安装包里的代码位于 `src/mods/Rain-Meadow-1.16.3/Online/AndroidExtras/`。独立插件源码保留在 `companion/`。
 
 ---
 
@@ -33,19 +32,13 @@
 
 ### 玩家
 
-从 [Releases](https://github.com/Miaosu1097/RainMeadow-Android/releases) 下载最新压缩包，解压到游戏模组目录即可。
+从 [Releases](https://github.com/Miaosu1097/RainMeadow-Android/releases) 下载 ZIP，将内容解压到游戏的 `mods/henpemaz_rainmeadow/`。确认 `modinfo.json` 和 `plugins/` 直接位于该目录下，然后在游戏的 Remix 菜单启用 Rain Meadow。
 
 ### 开发者
 
 ```sh
-# 1. 准备游戏程序集（二进制，不入库）
-#    放到 libs/game/<版本>/Managed/
-
-# 2. 初始化构建环境
-sh tools/rain-meadow/bootstrap_build.sh
-
-# 3. 编译
-sh tools/rain-meadow/build.sh
+# Prepare the game assemblies under libs/game/1.10/Managed/.
+sh tools/rain-meadow/ci.sh verify 1.10
 ```
 
 完整说明见 **[docs/ci.md](docs/ci.md)**（构建链路、IL 校验、Release 发布）。
@@ -60,11 +53,11 @@ sh tools/rain-meadow/build.sh
 │   ├── Rain-Meadow-1.16.3/       Rain Meadow 移植源码（上游快照 + 安卓改动）
 │   └── Android-IME/              安卓输入法桥接
 ├── companion/
-│   └── RainMeadowAndroidExtras/  平台广播 + 更新公告（独立插件）
+│   └── RainMeadowAndroidExtras/  独立插件源码
 ├── tools/rain-meadow/            构建、打包、IL 校验脚本
 ├── docs/                         文档
 ├── test/                         更新机制测试资产
-└── version.json                  更新公告数据源
+└── version.json                  玩家公告与更新数据源
 ```
 
 详细导航见 **[docs/README.md](docs/README.md)**。
@@ -74,10 +67,9 @@ sh tools/rain-meadow/build.sh
 ## 关键技术点
 
 <details>
-<summary><b>原生 Steam 直连（不依赖 Steamworks.NET）</b></summary>
+<summary><b>Android Steam 登录与联机</b></summary>
 
-桌面版靠 Steamworks.NET，这在 Android 上不存在。移植版通过 `dlopen` / `dlsym`
-直接绑定 Valve 的 `libsteamnetworkingsockets.so`：
+移植版使用 SteamKit2 登录，通过原生库 `libsteamnetworkingsockets.so` 处理 Steam 联机传输。
 
 - `Online/Steam/AndroidSteamTransport.cs` — P/Invoke 封装
 - `Online/Steam/AndroidSteamNativeLoader.cs` — 原生库加载
@@ -87,18 +79,10 @@ sh tools/rain-meadow/build.sh
 </details>
 
 <details>
-<summary><b>协议兼容性：为什么不给 LobbyState 加字段</b></summary>
+<summary><b>平台标识与协议兼容性</b></summary>
 
-平台信息**不在** Rain Meadow 协议里：
-
-- `LobbyState` 的 `[OnlineField]` 只有 mods 列表、玩家 ID、Remix 设置
-- `SteamPlayerId` 只序列化 `steamID`，`LANPlayerId` 只序列化 `endPoint`
-- 全库搜索 `RuntimePlatform` 仅 3 处，全在 UI 分支
-
-如果为了传平台信息而新增字段，官方桌面版解析时**字节错位，房间直接连不上**。
-
-所以走 `CustomManager`（`CustomPacket`）：按字符串 key 路由，与程序集版本无关，
-未订阅的客户端静默丢弃。详见 **[docs/broadcast.md](docs/broadcast.md)**。
+平台标识走 Rain Meadow 的自定义包通道，保持大厅状态与玩家 ID 的序列化格式兼容。
+详见 **[docs/broadcast.md](docs/broadcast.md)**。
 
 </details>
 

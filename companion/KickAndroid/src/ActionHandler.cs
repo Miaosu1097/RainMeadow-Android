@@ -4,15 +4,15 @@ using RainMeadow;
 namespace KickAndroid
 {
     /// <summary>
-    /// 检测到移植端玩家后的处理流程：按配置决定踢出 / 封禁 / 播报。
+    /// Applies the configured action when an Android player is detected.
     ///
-    /// 只有房主会执行（非房主不注册任何 hook）。
-    /// 踢人限制：Rain Meadow 的 RPCs.KickToLobby 内部会校验 rpc.from 是否是房主，
-    /// 因此非房主调用无效——本模组从入口处就排除了这种情况。
+    /// The plugin registers its hooks only for the lobby owner.
+    /// Rain Meadow checks that the sender of RPCs.KickToLobby owns the lobby.
+    /// The owner check at activation ensures these actions can be applied.
     /// </summary>
     public static class ActionHandler
     {
-        /// <summary>订阅检测事件。</summary>
+        /// <summary>Subscribes to detection events.</summary>
         public static void Hook()
         {
             AndroidDetector.Detected += OnDetected;
@@ -26,25 +26,25 @@ namespace KickAndroid
 
                 string name = SafeName(player);
 
-                // ---- 静默模式：只写日志 ----
+                // ---- Log-only mode ----
                 if (Options.IsSilentMode)
                 {
                     Log("[Silent] detected mobile player: " + name);
                     return;
                 }
 
-                // 1) 检测到即播报「进入房间」（独立开关）
+                // Send the optional join notification.
                 if (Options.ShouldNotifyDetect)
                     Notifier.Announce(Notifier.TextEntered(name));
 
-                // ---- 仅播报模式到此为止 ----
+                // ---- Notification-only mode ----
                 if (!Options.IsKickMode)
                 {
                     Log("[NotifyOnly] detected mobile player: " + name);
                     return;
                 }
 
-                // 2) 踢出类模式：执行踢出，再播报结果
+                // Kick the player and then announce the result when configured.
                 bool ban = Options.ShouldBan;
                 bool kicked = Kick(player);
 
@@ -70,7 +70,7 @@ namespace KickAndroid
             }
         }
 
-        /// <summary>执行踢出（可选连带封禁）。返回是否已发出。</summary>
+        /// <summary>Returns whether a kick or ban was sent.</summary>
         private static bool Kick(OnlinePlayer player)
         {
             var lobby = OnlineManager.lobby;
@@ -81,12 +81,12 @@ namespace KickAndroid
             {
                 if (Options.ShouldBan)
                 {
-                    // BanHammer.BanUser = 发送 KickToLobby RPC + 写入 bannedUsers（永久封禁）
+                    // BanUser sends the kick and persists the ban in bannedUsers.
                     BanHammer.BanUser(player);
                 }
                 else
                 {
-                    // 纯踢出：只发 KickToLobby，不碰封禁列表
+                    // Send a kick without changing the ban list.
                     player.InvokeRPC(new Action<RPCEvent>(RPCs.KickToLobby), Array.Empty<object>());
                 }
                 return true;
@@ -107,7 +107,7 @@ namespace KickAndroid
             }
             catch
             {
-                // 忽略
+                // Ignore logging failures here.
             }
             return player.inLobbyId.ToString();
         }

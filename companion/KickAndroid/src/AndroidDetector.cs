@@ -7,49 +7,49 @@ using UnityEngine;
 namespace KickAndroid
 {
     /// <summary>
-    /// 移植端（安卓）玩家标记的接收端。
+    /// Receives Android platform markers.
     ///
-    /// 两条来源，同时监听：
-    /// 1) 主通道：Rain Meadow 内置 CustomPacket（key 字符串路由，与对方的 DLL 版本无关）。
-    /// 2) 兼容通道：反射订阅 Platform Marker 的 AndroidMarkerReceived 事件（旧版 Marker 也能识别）。
+    /// The detector listens to two sources:
+    /// 1) Rain Meadow's custom packet channel.
+    /// 2) The legacy Platform Marker event.
     ///
-    /// 去重语义（重要）：
-    /// - 同一玩家在「同一次房间停留」内只会触发一次 Detected，
-    ///   即使对方每 5 秒广播一次也不会重复播报。
-    /// - 玩家离开房间后记录会被清掉，再次进入房间会重新触发一次。
-    /// - 播报环节本身抛异常时也会清掉记录，保证下个广播周期还能补报，
-    ///   即「保底至少成功播报一次」。
+    /// A player's current lobby visit defines the deduplication scope:
+    /// - Report detection once per visit.
+    /// - Periodic markers for that visit do not generate additional notifications.
+    /// - Remove the report when the player leaves so a later rejoin can be detected.
+    /// - Clear the report if a handler throws so a subsequent marker can retry.
+    ///   The next notification opportunity depends on receipt of another marker.
     ///
-    /// 两者都以「网络层写入的发送者」为准，不接受包内自报身份。
+    /// Both sources supply the sender through the transport.
     /// </summary>
     public static class AndroidDetector
     {
-        /// <summary>CustomPacket 的 key，必须与发送端逐字符一致（Rain Meadow 限制 ≤12 字符）。</summary>
+        /// <summary>Custom packet subscription key shared with the sender.</summary>
         public const string PacketKey = "KickPE_Plat";
 
-        /// <summary>标记载荷。发送端写入 "android" 即视为移植端。</summary>
+        /// <summary>Payload identifying an Android platform marker.</summary>
         public const string PayloadAndroid = "android";
 
-        /// <summary>收到移植端标记时触发：参数为上报者。同一玩家同一房间停留期内只触发一次。</summary>
+        /// <summary>Fires once per sender's lobby visit when a marker is received.</summary>
         public static event Action<OnlinePlayer> Detected;
 
         private static bool packetSubscribed;
         private static bool eventSubscribed;
         private static bool compatTried;
 
-        // CustomPacket 订阅重试：订阅时对方可能还没注册该 key，抛 KeyNotFound；收到过包就不再重试
+        // Retry the subscription until registration succeeds or a packet arrives.
         private static float nextSubscribeTry;
         private static int subscribeTries;
         private static bool anyPacketReceived;
 
-        // 周期性清理「已离开」记录（1 秒一次），保证退出再进能重新播报
+        // Prune players who have left once a second.
         private static float nextPrune;
 
-        // 本房间内已上报过的玩家（避免 packet + marker 两条通道重复触发同一事件）
+        // Track reports across both sources for the current lobby.
         private static readonly HashSet<OnlinePlayer> reported = new HashSet<OnlinePlayer>();
         private static Lobby reportedLobby;
 
-        /// <summary>注册所有接收通道。非房主不会调用本方法。</summary>
+        /// <summary>Registers the receiver channels for the lobby owner.</summary>
         public static void Hook()
         {
             SubscribePacket();
@@ -67,8 +67,8 @@ namespace KickAndroid
             }
             catch (Exception e)
             {
-                // 对方尚未注册该 key 时这里会抛 KeyNotFound；handler 通常已经挂上了，
-                // 但状态位没置真，所以下面仍会继续重试（重试导致的重复 handler 由 reported 去重兜住）。
+                // Subscription can fail before the packet key is registered.
+                // The reported set deduplicates dispatches if retrying added another handler.
                 ModLogger.Error("[Detect] CustomPacket subscribe failed: " + e.Message);
             }
         }
@@ -81,7 +81,7 @@ namespace KickAndroid
             {
                 var lobby = OnlineManager.lobby;
 
-                // 主通道重试：订阅失败且还没成功收到过包时，每 2 秒再试一次，最多 30 次
+                // Retry a failed primary subscription while no packets have been received.
                 if (!packetSubscribed && !anyPacketReceived && lobby != null && subscribeTries < 30
                     && Time.realtimeSinceStartup >= nextSubscribeTry)
                 {
@@ -90,14 +90,14 @@ namespace KickAndroid
                     SubscribePacket();
                 }
 
-                // 兼容通道延迟到有房间时再尝试（Marker 类型可能晚于本模组加载）
+                // Try the compatibility channel in the lobby so late-loaded plugins can be found.
                 if (!eventSubscribed && !compatTried && lobby != null)
                 {
                     compatTried = true;
                     TrySubscribeMarkerEvent();
                 }
 
-                // 每秒清理一次已离开的玩家
+                // Prune players who have left.
                 if (Time.realtimeSinceStartup >= nextPrune)
                 {
                     nextPrune = Time.realtimeSinceStartup + 1f;
@@ -110,7 +110,7 @@ namespace KickAndroid
             }
         }
 
-        /// <summary>清掉已不在房间里的记录，使「退出再进」能重新播报。</summary>
+        /// <summary>Clears reports for departed players so a subsequent join can be reported.</summary>
         private static void PruneReported()
         {
             var lobby = OnlineManager.lobby;
@@ -135,7 +135,7 @@ namespace KickAndroid
             reported.RemoveWhere(p => p == null || p.hasLeft || !lobby.participants.Contains(p));
         }
 
-        // ---- 兼容通道：反射订阅 Platform Marker 事件 ----
+        // ---- Legacy Platform Marker event ----
         private static void TrySubscribeMarkerEvent()
         {
             try
@@ -150,7 +150,7 @@ namespace KickAndroid
                     }
                     catch
                     {
-                        // 忽略单个程序集加载失败
+                        // Skip assemblies whose types cannot be loaded.
                     }
                 }
 
@@ -180,13 +180,13 @@ namespace KickAndroid
             }
         }
 
-        /// <summary>Platform Marker 事件回调（签名 Action&lt;OnlinePlayer&gt;）。</summary>
+        /// <summary>Handles the Platform Marker event.</summary>
         private static void OnMarkerEvent(OnlinePlayer player)
         {
             Report(player, "marker");
         }
 
-        /// <summary>统一入口：校验后转交给上层。同一玩家在同一房间停留期内只触发一次。</summary>
+        /// <summary>Validates a marker and dispatches the detection once per lobby visit.</summary>
         internal static void Report(OnlinePlayer player, string source)
         {
             if (player == null || player.isMe) return;
@@ -195,17 +195,17 @@ namespace KickAndroid
             if (lobby == null) return;
             if (!lobby.participants.Contains(player)) return;
 
-            // 换房间 → 清空记录
+            // Clear reports when the lobby changes.
             if (!ReferenceEquals(reportedLobby, lobby))
             {
                 reportedLobby = lobby;
                 reported.Clear();
             }
 
-            // 清掉已离开的（另一条通道也可能是离开后才到）
+            // Prune departed players before dispatching a late report.
             reported.RemoveWhere(p => p == null || p.hasLeft || !lobby.participants.Contains(p));
 
-            // 同一房间停留期内已处理过 → 忽略（对方每 5 秒广播一次也不会重复播报）
+            // Ignore repeat reports for the current visit.
             if (!reported.Add(player)) return;
 
             if (source == "packet") anyPacketReceived = true;
@@ -224,17 +224,17 @@ namespace KickAndroid
                 }
                 catch (Exception e)
                 {
-                    // 单个处理者出错不影响其他处理者
+                    // Let the other handlers run even if one fails.
                     failed = true;
                     ModLogger.Error("[Detect] handler error: " + e.Message);
                 }
             }
 
-            // 播报/处理失败 → 撤销记录，下个广播周期（≤5 秒）还能重试，保证至少成功一次
+            // Clear the report so the next marker can retry a failed handler.
             if (failed) reported.Remove(player);
         }
 
-        /// <summary>CustomPacket 订阅器。</summary>
+        /// <summary>Custom packet subscription handler.</summary>
         private sealed class PacketHandler : IUseCustomPackets
         {
             public bool Active

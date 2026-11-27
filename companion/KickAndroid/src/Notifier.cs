@@ -3,23 +3,23 @@ using RainMeadow;
 namespace KickAndroid
 {
     /// <summary>
-    /// 播报模块。
+    /// Sends announcements for the lobby owner's configured actions.
     ///
-    /// 两种可见范围：
-    ///   HOST_ONLY  → 本机系统消息（ChatLogManager.LogSystemMessage），只有房主屏幕显示，
-    ///                颜色由 SystemMessageTypeColor 定制为 #02DFFF。
-    ///   EVERYONE   → 原版聊天（MatchmakingManager.SendChatMessage），全房都能看到，
-    ///                显示为「[房主名]: [Kick PE]...」，颜色为房主的角色色（原版聊天的固有限制）。
+    /// The visibility options are:
+    ///   HOST_ONLY: Local system message via ChatLogManager.LogSystemMessage,
+    ///              displayed with the configured system message color.
+    ///   EVERYONE:  Lobby chat via MatchmakingManager.SendChatMessage,
+    ///              displayed with the lobby owner's name and character color.
     ///
-    /// 文案会按 ShowPlayerName 在「具名 / 匿名」两套之间切换，并统一带 [Kick PE] 前缀。
+    /// ShowPlayerName controls whether the text names the player. All messages use the [Kick PE] prefix.
     /// </summary>
     public static class Notifier
     {
-        /// <summary>模组消息前缀，便于玩家辨识来源。</summary>
+        /// <summary>Prefix identifying messages from this mod.</summary>
         public const string Prefix = "[Kick PE]";
 
-        /// <summary>自定义系统消息类型。<see cref="ChatLogManager.SystemMessageType"/> 是 ushort，
-        /// 取一个内置值之外的数字，避免与官方消息冲突。</summary>
+        /// <summary>Custom message type outside the built-in <see cref="ChatLogManager.SystemMessageType"/> values.
+        /// Registered with its own display color.</summary>
         private const ushort CustomMessageType = 200;
 
         /// <summary>#02DFFF</summary>
@@ -28,7 +28,7 @@ namespace KickAndroid
 
         private static bool colorInstalled;
 
-        /// <summary>把自定义消息类型的颜色写进 Rain Meadow 的颜色表（只做一次）。</summary>
+        /// <summary>Registers the custom system message color once.</summary>
         private static void InstallColor()
         {
             if (colorInstalled) return;
@@ -48,9 +48,9 @@ namespace KickAndroid
             }
         }
 
-        // ---- 文案 ----
+        // ---- Message text ----
 
-        /// <summary>「进入房间」文案。</summary>
+        /// <summary>Text for a detected arrival.</summary>
         public static string TextEntered(string playerName)
         {
             return Options.UsePlayerName
@@ -58,7 +58,7 @@ namespace KickAndroid
                 : "有移植端用户进入房间";
         }
 
-        /// <summary>「已被踢出」文案。</summary>
+        /// <summary>Text for a kicked player.</summary>
         public static string TextKicked(string playerName)
         {
             return Options.UsePlayerName
@@ -66,7 +66,7 @@ namespace KickAndroid
                 : "有移植端用户已被踢出";
         }
 
-        /// <summary>「已被踢出并封禁」文案。</summary>
+        /// <summary>Text for a kicked and banned player.</summary>
         public static string TextBanned(string playerName)
         {
             return Options.UsePlayerName
@@ -74,9 +74,9 @@ namespace KickAndroid
                 : "有移植端用户已被踢出并封禁";
         }
 
-        // ---- 发送 ----
+        // ---- Dispatch ----
 
-        /// <summary>播报一条消息。body 为不含前缀的正文。</summary>
+        /// <summary>Dispatches a message using a body without the mod prefix.</summary>
         public static void Announce(string body)
         {
             string line = Prefix + body;
@@ -87,7 +87,7 @@ namespace KickAndroid
                 ShowToHostOnly(line);
         }
 
-        /// <summary>仅房主可见：本机系统消息，带自定义颜色。</summary>
+        /// <summary>Shows a local system message with the configured color.</summary>
         private static void ShowToHostOnly(string line)
         {
             try
@@ -101,7 +101,7 @@ namespace KickAndroid
             }
         }
 
-        /// <summary>所有人可见：走原版聊天，全房都能看到（颜色为房主角色色）。</summary>
+        /// <summary>Sends lobby chat visible to all participants.</summary>
         private static void BroadcastToEveryone(string line)
         {
             try
@@ -109,7 +109,7 @@ namespace KickAndroid
                 var mm = MatchmakingManager.currentInstance;
                 if (mm == null || !mm.canSendChatMessages)
                 {
-                    // 无法广播时退回本机可见，至少房主能看到
+                    // Show a local message if sending lobby chat fails.
                     ModLogger.Warn("[Notify] chat unavailable, fallback to host-only");
                     ShowToHostOnly(line);
                     return;

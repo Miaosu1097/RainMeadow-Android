@@ -13,27 +13,27 @@ using UnityEngine.Networking;
 namespace RainMeadow
 {
     /// <summary>
-    /// 公告与更新检查。
+    /// Checks for player announcements and updates.
     ///
-    /// 数据源：仓库根目录 version.json（raw.githubusercontent.com，不占 API 限额）
+    /// Reads version.json from the repository.
     ///
-    /// 两条独立通道：
-    ///   notice  —— 公告。notice.version 比本地已读的大就弹，与游戏版本无关。
-    ///   release —— 版本更新。release.latest 大于 MeadowVersionStr 才弹。
-    ///   两条同时满足时合并成一个弹窗。
+    /// The manifest has two independent sections:
+    ///   notice: Show a notice if its identifier differs from the locally recorded one.
+    ///   release: Show an update if release.latest is newer than MeadowVersionStr.
+    ///   If both apply, combine them in one dialog.
     ///
-    /// 断网：
-    ///   拉取失败 → 弹「检查失败」（单按钮），之后每 20 秒重试
-    ///   网络恢复瞬间（NetworkReachability 变化）立即重试
+    /// Recovery:
+    ///   If the fetch fails, show a dialog and retry every 20 seconds.
+    ///   Retry immediately when network reachability changes to online.
     /// </summary>
     internal static class UpdateChecker
     {
         /// <summary>
-        /// 公告/更新数据源。按顺序尝试，第一个能解析成 JSON 成功的就用。
+        /// Try the manifest sources in order and use the first valid JSON response.
         ///
-        /// 实测（国内网络）：raw.githubusercontent.com 与 cdn.jsdelivr.net 均超时不可达，
-        /// 只有 GitHub 公共代理可用，因此把 gh-proxy.com 放在首位。
-        /// 海外用户或代理恢复时会自然回落到官方直连。
+        /// The order reflects availability observed during network testing.
+        /// The first source uses a proxy for GitHub's raw content.
+        /// The remaining sources provide fallbacks.
         /// </summary>
         private static readonly string[] VersionUrls =
         {
@@ -71,12 +71,12 @@ namespace RainMeadow
         private static string relNotes;
         private static string relDownload;
         private static bool relForce;
-        /// <summary>一次更新要替换的文件。支持两种 JSON 写法，见 ParseTargets。</summary>
+        /// <summary>A file to replace in an update. See ParseTargets for supported formats.</summary>
         private sealed class TargetSpec
         {
-            internal string path;     // 相对模组根目录
-            internal string url;      // 为空则用 release.download
-            internal string sha256;   // 为空则不校验
+            internal string path;     // Path relative to the mod root.
+            internal string url;      // Falls back to release.download when empty.
+            internal string sha256;   // Optional SHA-256 checksum.
         }
 
         private static readonly List<TargetSpec> relTargets = new List<TargetSpec>();
@@ -102,7 +102,7 @@ namespace RainMeadow
                       + " sources=" + VersionUrls.Length);
         }
 
-        // ================= 启动时替换已下载的文件 =================
+        // ============ Apply staged files on startup ============
 
         internal static void ApplyPendingUpdate()
         {
@@ -169,7 +169,7 @@ namespace RainMeadow
             return string.IsNullOrEmpty(parent) ? p : parent;
         }
 
-        // ================= 主循环 =================
+        // ============ Main loop ============
 
         private static void Tick(On.RainWorld.orig_Update orig, RainWorld self)
         {
@@ -227,9 +227,9 @@ namespace RainMeadow
         }
 
         /// <summary>
-        /// 把 GitHub 直链换成可用代理链。
-        /// version.json 里的 image / download / targets[].url 都可能是 raw 直链，
-        /// 在拉不到 raw.githubusercontent.com 的地区会静默失败，统一走代理。
+        /// Rewrite raw GitHub links through the configured proxy.
+        /// This applies to image, download, and targets[].url values from the manifest.
+        /// The proxy provides access where GitHub's raw host is unreachable.
         /// </summary>
         private static string Proxyify(string url)
         {
@@ -254,14 +254,14 @@ namespace RainMeadow
             }
         }
 
-        // ================= 拉取 =================
+        // ============ Fetch manifest ============
 
         private static IEnumerator Fetch()
         {
             JObject root = null;
             string usedUrl = null;
 
-            // 依次尝试所有源，只有成功解析成 JSON 才算成功（防止代理返回错误网页）
+            // A source succeeds only if it returns valid JSON.
             for (int i = 0; i < VersionUrls.Length; i++)
             {
                 string url = VersionUrls[i];
@@ -284,8 +284,8 @@ namespace RainMeadow
                 {
                     root = JObject.Parse(body);
 
-                    // GitHub Contents API 返回的是 {"content": "<base64>", ...} 包装，
-                    // 需要解出真正的 version.json 内容。
+                    // The GitHub Contents API wraps files in a base64-encoded content property.
+                    // Decode that property to obtain the manifest.
                     if (url.IndexOf("api.github.com", StringComparison.Ordinal) >= 0)
                     {
                         var contentToken = root["content"];
@@ -327,9 +327,9 @@ namespace RainMeadow
         }
 
         /// <summary>
-        /// 游戏内语言是否应当使用英文文案。
-        /// 雨世界的官方中文枚举是 TraditionalChinese（简体mod只换文本、不改枚举），
-        /// 因此只要不是 TraditionalChinese 就一律走英文。
+        /// Determines whether to display English text.
+        /// The game uses TraditionalChinese for Chinese, including when a Simplified Chinese mod replaces the text.
+        /// All other language settings use English.
         /// </summary>
         private static bool PreferEnglish()
         {
@@ -343,12 +343,12 @@ namespace RainMeadow
             }
             catch
             {
-                // 取不到语言时按中文处理（本项目主要用户群）
+                // Use Chinese if the game language cannot be read.
             }
             return false;
         }
 
-        /// <summary>按语言取字段：英文环境优先用 keyEn，缺失则回退到 key。</summary>
+        /// <summary>Prefers keyEn for English and falls back to key when it is missing.</summary>
         private static string PickLang(JToken o, string key, string keyEn, bool en)
         {
             if (o == null) return null;
@@ -390,7 +390,7 @@ namespace RainMeadow
                 }
             }
 
-            // 图片：支持单张 image 或多帧 images
+            // Accept a single image and an optional list of frames.
             noticeImages.Clear();
             var single = o.Value<string>("image");
             if (!string.IsNullOrWhiteSpace(single)) noticeImages.Add(single.Trim());
@@ -432,18 +432,18 @@ namespace RainMeadow
         }
 
         /// <summary>
-        /// 解析 targets，兼容两种写法：
+        /// Parses targets in either of two formats:
         ///
-        ///   1) 字符串数组（所有文件共用 release.download 的内容）
+        ///   1) A string array, with each file using the content at release.download.
         ///      "targets": ["plugins/Rain Meadow.dll", "text/text_chi/strings.txt"]
         ///
-        ///   2) 对象数组（每个文件独立 url / sha256）
+        ///   2) An object array with a URL and optional SHA-256 per target.
         ///      "targets": [
         ///        { "path": "plugins/Rain Meadow.dll", "url": "https://...", "sha256": "..." },
         ///        { "path": "world/cl/world_cl.txt",  "url": "https://..." }
         ///      ]
         ///
-        /// 路径一律相对「模组根目录」（即 plugins 的上一级）。
+        /// All paths are relative to the mod root, which contains the plugins directory.
         /// </summary>
         private static void ParseTargets(JArray arr)
         {
@@ -455,7 +455,7 @@ namespace RainMeadow
                 {
                     if (t == null) continue;
 
-                    // 字符串形式
+                    // String target.
                     if (t.Type == JTokenType.String)
                     {
                         var s = t.ToString();
@@ -464,7 +464,7 @@ namespace RainMeadow
                         continue;
                     }
 
-                    // 对象形式
+                    // Object target.
                     if (t.Type == JTokenType.Object)
                     {
                         var path = t.Value<string>("path");
@@ -484,7 +484,7 @@ namespace RainMeadow
                 relTargets.Add(new TargetSpec { path = "plugins/Rain Meadow.dll" });
         }
 
-        // ================= 弹窗 =================
+        // ============ Dialogs ============
 
         private static void ShowFailure(RainWorld self)
         {
@@ -563,7 +563,7 @@ namespace RainMeadow
                                       + " buttons=" + buttons.Count
                                       + " images=" + noticeImages.Count);
 
-                // 有图片时先异步下载，加载完再弹（状态由图片流程在成功后再写）
+                // Download any images before showing the dialog and recording the read state.
                 if (noticeImages.Count > 0 && host != null && hasNotice)
                 {
                     host.StartCoroutine(DownloadImagesThenShow(pm, title, subtitle, body, versionLine, buttons));
@@ -589,7 +589,7 @@ namespace RainMeadow
             }
         }
 
-        // ================= 公告图片 =================
+        // ============ Announcement images ============
 
         private static IEnumerator DownloadImagesThenShow(ProcessManager pm, string title, string subtitle,
                                                           string body, string versionLine,
@@ -629,8 +629,8 @@ namespace RainMeadow
 
                 if (hasNotice)
                 {
-                    // 公告带了图片但一张都没下下来（网络差 / 代理超时）时，本次不记已读，
-                    // 下次启动会重试；连续失败 3 次后放行，避免网络长期不通导致公告永远弹。
+                    // When all image downloads fail, leave the notice unread so a later launch can retry.
+                    // After three failed attempts, record it as read to avoid repeating the text-only notice indefinitely.
                     bool imgWanted = noticeImages.Count > 0;
                     bool imgGot = textures.Count > 0;
                     if (!imgWanted || imgGot)
@@ -663,7 +663,7 @@ namespace RainMeadow
             }
         }
 
-        // ================= 下载（多目标） =================
+        // ============ Download targets ============
 
         private static void BeginDownload()
         {
@@ -777,7 +777,7 @@ namespace RainMeadow
             catch (Exception e) { UnityEngine.Debug.LogError("[AndroidExtras] restart: " + e.Message); }
         }
 
-        // ================= 工具 =================
+        // ============ Utilities ============
 
         private static void OpenUrl(string url)
         {

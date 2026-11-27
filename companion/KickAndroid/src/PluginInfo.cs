@@ -5,7 +5,7 @@ using System.Security.Permissions;
 
 namespace KickAndroid
 {
-    /// <summary>模组元信息。id 必须与 modinfo.json 的 id 完全一致（strings.txt 的键由它拼出）。</summary>
+    /// <summary>Plugin metadata. The ID in modinfo.json also prefixes the strings.txt keys.</summary>
     public static class PluginInfo
     {
         public const string GUID = "Kick.Fcck.Android.peRw.1097";

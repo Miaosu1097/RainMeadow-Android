@@ -6,39 +6,39 @@ using UnityEngine;
 namespace RainMeadow
 {
     /// <summary>
-    /// 自定义公告弹窗。
+    /// Displays player announcements.
     ///
-    /// 为什么不用 DialogNotify：
-    ///   DialogNotify 是单按钮 + 固定左对齐排版，无法满足：
-    ///     · 大标题居中且字号自适应
-    ///     · 副标题（公告版本 + 时间）紧跟标题下方
-    ///     · 左下角显示雨甸版本
-    ///     · 右下角多个自定义按钮，文字长度决定按钮宽度
-    ///     · 正文富文本 + 内容过长时可滚动
+    /// The layout supports the following features:
+    ///   Adjustable title, subtitle, and version labels
+    ///   A centered title sized to fit the available width
+    ///   The announcement version and time below the title
+    ///   The Meadow version in the lower-left corner
+    ///   Text-sized custom buttons in the lower-right corner
+    ///   Rich text with scrolling for longer announcements
     ///
-    /// 做法：继承抽象类 Menu.Dialog（size/pos/dialogPage 都是 protected），
-    /// 自己往 dialogPage 上挂 label 和按钮；按钮点击通过重写 Singal 分发。
+    /// This Dialog subclass adds its controls to dialogPage.
+    /// The Signal override dispatches button actions.
     ///
-    /// 关闭方式：manager.StopSideProcess(this)。
-    /// 不能用 RequestMainProcessSwitch(MainMenu)——当前主循环本来就是 MainMenu，
-    /// 目标 ID 相同时该调用会被忽略，表现为「点了没反应」。
+    /// Close the dialog with manager.StopSideProcess(this).
+    /// When the main process is already MainMenu, requesting a switch to MainMenu
+    /// leaves the dialog open.
     /// </summary>
     internal sealed class AnnoncementDialog : Dialog
     {
-        // ---- 布局 ----
+        // ---- Layout ----
         private const float PadX = 36f;
         private const float PadY = 24f;
 
-        // 字号（整体放大 1.5 倍，按钮文字除外）
+        // Font sizes are scaled by 1.5 except for button text.
         private const float TitleMaxScale = 2.04f;   // 1.36 * 1.5
         private const float TitleMinScale = 0.93f;   // 0.62 * 1.5
         private const float TitleBoxH = 112f;
         private const float SubtitleScale = 1.08f;   // 0.72 * 1.5
         private const float BodyScale = 1.23f;       // 0.82 * 1.5
         private const float VersionScale = 0.93f;    // 0.62 * 1.5
-        private const float LineGap = 30f;           // 单行最小行高
+        private const float LineGap = 30f;           // Minimum line height.
 
-        // 按钮（文字与高度保持不变）
+        // Button text size and height are fixed.
         private const float ButtonH = 36f;
         private const float ButtonPadX = 24f;
         private const float ButtonGap = 12f;
@@ -46,7 +46,7 @@ namespace RainMeadow
 
         private const string SignalPrefix = "RMExtra_BTN_";
 
-        /// <summary>按屏幕尺寸决定弹窗大小，避免小屏溢出。</summary>
+        /// <summary>Sizes the dialog to fit the current screen.</summary>
         private static Vector2 CalcSize()
         {
             float sw = UnityEngine.Screen.width;
@@ -56,7 +56,7 @@ namespace RainMeadow
             return new Vector2(w, h);
         }
 
-        // ---- 数据 ----
+        // ---- Content ----
         private readonly string title;
         private readonly string subtitle;
         private readonly string bodyRich;
@@ -64,7 +64,7 @@ namespace RainMeadow
         private readonly Action onUpdate;
         private readonly List<ButtonSpec> buttons;
 
-        // 图片（可为空）。frames 多于 1 帧时按 fps 轮播，实现类 GIF 效果。
+        // Optional image frames played at the configured frame rate.
         private readonly List<Texture2D> frames;
         private readonly float fps;
         private FSprite imageSprite;
@@ -72,11 +72,11 @@ namespace RainMeadow
         private float animTimer;
         private int animIndex;
 
-        // ---- 正文滚动 ----
+        // ---- Body scrolling ----
         private sealed class Piece
         {
             internal MenuLabel label;
-            internal float baseY;   // scrollY == 0 时的 y
+            internal float baseY;   // Vertical position at scrollY == 0.
             internal float halfH;
         }
 
@@ -117,16 +117,16 @@ namespace RainMeadow
         internal sealed class ButtonSpec
         {
             internal string text;
-            internal string url;      // 非空 → 打开浏览器
-            internal bool isUpdate;   // true → 触发下载流程
+            internal string url;      // Opens the URL in a browser when set.
+            internal bool isUpdate;   // Starts the update download when true.
         }
 
-        // ============ 构建 ============
+        // ============ Build ============
 
         /// <summary>
-        /// 构建所有控件。
-        /// 返回 false 表示构建过程中抛了异常——调用方不应把公告标记为已读，
-        /// 否则玩家会永远看不到这条公告。
+        /// Builds the dialog controls.
+        /// Returns false if construction fails so the caller can leave
+        /// the announcement unread.
         /// </summary>
         internal bool Build()
         {
@@ -176,7 +176,7 @@ namespace RainMeadow
 
             float boxW = size.x - PadX * 2f;
 
-            // scale 从大往小试，直到宽度不超出
+            // Reduce the scale until the title fits within the available width.
             float scale = TitleMaxScale;
             var label = NewLabel(title, true);
             label.label.alignment = FLabelAlignment.Center;
@@ -229,7 +229,7 @@ namespace RainMeadow
             return top - 16f;
         }
 
-        // ============ 正文（自动折行 + 可滚动） ============
+        // ============ Body wrapping and scrolling ============
 
         private float Measure(string text, float scale)
         {
@@ -239,7 +239,7 @@ namespace RainMeadow
             return measureLabel.label.textRect.width * scale;
         }
 
-        /// <summary>二分查找：在给定宽度里最多能放多少个字符。</summary>
+        /// <summary>Finds the longest text prefix that fits the available width.</summary>
         private int FitChars(string text, float scale, float avail)
         {
             if (avail <= 0f) return 0;
@@ -292,7 +292,7 @@ namespace RainMeadow
                         break;
                     }
 
-                    // 本行还有空间，但整段放不下 → 按字符切一段放下
+                    // Split the run to fill the remaining space on this line.
                     if (cursorX > left + 0.5f)
                     {
                         int n = FitChars(rest, scale, avail);
@@ -308,7 +308,7 @@ namespace RainMeadow
                         continue;
                     }
 
-                    // 行首都放不下：整段比一行还宽，切满一行
+                    // Split an oversized run at the start of a line.
                     int fit = FitChars(rest, scale, avail);
                     if (fit <= 0) fit = 1;
                     string head = rest.Substring(0, fit);
@@ -344,7 +344,7 @@ namespace RainMeadow
             lineH = Mathf.Max(lineH, h);
         }
 
-        // ============ 滚动 ============
+        // ============ Scrolling ============
 
         public override void Update()
         {
@@ -358,7 +358,7 @@ namespace RainMeadow
 
                 float delta = 0f;
 
-                // 触摸拖动（手机）
+                // Touch dragging.
                 if (Input.touchCount > 0)
                 {
                     var t = Input.GetTouch(0);
@@ -366,7 +366,7 @@ namespace RainMeadow
                         delta -= t.deltaPosition.y * 1.6f;
                 }
 
-                // 鼠标滚轮（若轴未定义则永久跳过，避免每帧抛异常）
+                // Disable mouse wheel handling if the axis is unavailable.
                 if (wheelAxisOk)
                 {
                     try
@@ -377,7 +377,7 @@ namespace RainMeadow
                     catch { wheelAxisOk = false; }
                 }
 
-                // 方向键 / 手柄
+                // Keyboard and controller input.
                 if (Input.GetKey(KeyCode.UpArrow)) delta += 320f * Time.deltaTime;
                 if (Input.GetKey(KeyCode.DownArrow)) delta -= 320f * Time.deltaTime;
 
@@ -400,8 +400,8 @@ namespace RainMeadow
                 float y = p.baseY + scrollY;
                 p.label.pos = new Vector2(p.label.pos.x, y);
 
-                // 部分越界的行仍然显示（垂直溢出在背景内看不出来），
-                // 完全离屏的隐藏，避免滚动到很远时还要渲染。
+                // Keep partially visible lines enabled.
+                // Hide lines that have scrolled entirely out of view.
                 p.label.label.isVisible =
                     (y + p.halfH) > bodyBottom - 60f && (y - p.halfH) < bodyTop + 60f;
             }
@@ -451,7 +451,7 @@ namespace RainMeadow
             float thumbH = Mathf.Max(30f, trackH * (viewH / Mathf.Max(1f, contentH)));
             thumbH = Mathf.Min(thumbH, trackH);
 
-            float t = scrollY / maxScroll;                     // 0 = 顶部
+            float t = scrollY / maxScroll;                     // Zero corresponds to the top of the scroll area.
             float topY = bodyTop - thumbH / 2f;
             float bottomY = bodyBottom + thumbH / 2f;
             float y = Mathf.Lerp(topY, bottomY, t);
@@ -460,11 +460,11 @@ namespace RainMeadow
             scrollThumb.SetPosition(new Vector2(scrollThumb.x, y));
         }
 
-        // ============ 图片 ============
+        // ============ Images ============
 
         /// <summary>
-        /// 放置图片。宽度撑满可用宽度，高度按原始宽高比缩放，
-        /// 但最多占弹窗高度的 34%，避免挤掉正文。
+        /// Scales the image to fit the available width while preserving its aspect ratio.
+        /// Caps the image area at 34 percent of the dialog height.
         /// </summary>
         private float PlaceImage(float top)
         {
@@ -527,7 +527,7 @@ namespace RainMeadow
                 imageSprite.element = at.elements[0];
         }
 
-        // ============ 底部 ============
+        // ============ Footer ============
 
         private void PlaceVersion(float left, float bottomY)
         {
@@ -548,7 +548,7 @@ namespace RainMeadow
             if (buttons.Count == 0)
                 buttons.Add(new ButtonSpec { text = "关闭" });
 
-            // 量宽（文字大小保持不变）
+            // Measure the buttons using the fixed text size.
             var widths = new float[buttons.Count];
             for (int i = 0; i < buttons.Count; i++)
             {
@@ -559,7 +559,7 @@ namespace RainMeadow
                 widths[i] = Mathf.Max(104f, tw + ButtonPadX * 2f);
             }
 
-            // 从右往左排
+            // Lay out the buttons from right to left.
             float x = pos.x + size.x - PadX - 16f;
             float y = pos.y + PadY + ButtonH / 2f;
 
@@ -578,7 +578,7 @@ namespace RainMeadow
             }
         }
 
-        // ============ 点击分发 ============
+        // ============ Button actions ============
 
         public override void Singal(MenuObject sender, string message)
         {
@@ -600,7 +600,7 @@ namespace RainMeadow
                     if (!string.IsNullOrEmpty(spec.url))
                     {
                         try { Application.OpenURL(spec.url); } catch { }
-                        return;   // 打开链接不关闭弹窗，方便点多个
+                        return;   // Keep the dialog open so the player can follow other links.
                     }
 
                     CloseSelf();
@@ -612,9 +612,9 @@ namespace RainMeadow
         }
 
         /// <summary>
-        /// 关闭自己。
-        /// 必须用 StopSideProcess：Dialog 是挂在当前主循环上的 side process，
-        /// 而 RequestMainProcessSwitch 在目标 ID 与当前主循环相同时会被忽略。
+        /// Closes this dialog.
+        /// Stop the dialog as a side process attached to the current main loop.
+        /// A switch to the current main process is ignored.
         /// </summary>
         private void CloseSelf()
         {
@@ -628,7 +628,7 @@ namespace RainMeadow
             }
         }
 
-        // ============ 工具 ============
+        // ============ Utilities ============
 
         private MenuLabel NewLabel(string text, bool big)
         {
