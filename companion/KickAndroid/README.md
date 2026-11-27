@@ -23,8 +23,10 @@
 | 键 | 说明 | 默认 |
 |---|---|---|
 | `ActionMode` | `KICK` / `KICK_NOTIFY` / `NOTIFY_ONLY` / `SILENT` | `KICK_NOTIFY` |
-| `BanInsteadOfKick` | 踢出时连带永久封禁 | `false` |
-| `NotifyOnDetect` | 检测到即播报「进入房间」 | `true` |
+| `BanAlso` | 踢出时同时加入大厅黑名单，防止立刻重进。仅踢出模式有效 | `false` |
+| `NotifyOnDetect` | 检测到即播报「进入房间」，与踢出动作独立 | `true` |
+| `NotifyScope` | 播报给谁看。`HOST_ONLY` 仅房主可见；`EVERYONE` 走普通聊天让房内所有人看到 | `HOST_ONLY` |
+| `ShowPlayerName` | 播报中显示玩家名；关掉则使用匿名措辞 | `true` |
 | `WriteLog` | 写 `KickAndroid.log` | `true` |
 
 **只想看提示、不踢人 → `NOTIFY_ONLY`。** 选 `SILENT` 时只写日志，游戏内不会有任何提示。
