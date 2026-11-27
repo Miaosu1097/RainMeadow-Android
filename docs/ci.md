@@ -30,7 +30,7 @@ Git 主仓库保存源码、文本资源、脚本和输入版本记录。构建�
 
 在 Actions 手动运行 **Rain Meadow Android Test DLL**，选择要调试的分支和游戏快照。工作流只检出该快照的 `Managed.zip`，使用与正式包相同的托管编译选项和 IL 校验，跳过游戏美术、音频、着色器和原生库打包。在 Releases 的 **Android Test DLL** 草稿中下载 DLL。只有拥有仓库写权限的账号可以看到草稿。[GitHub Release 权限说明](https://docs.github.com/en/rest/releases/releases#list-releases)
 
-已安装匹配的完整模组时，可用下载的 DLL 替换 `plugins/Rain Meadow.dll`。本地可运行 `sh tools/rain-meadow/ci.sh test 1.10`，输出位于 `release/Rain-Meadow/1.10/test/Rain Meadow.dll`。
+已安装匹配的完整模组时，将 GitHub 附件 `Rain.Meadow.dll` 改名为 `Rain Meadow.dll`，再覆盖 `plugins/` 中的同名文件。本地可运行 `sh tools/rain-meadow/ci.sh test 1.10`，输出位于 `release/Rain-Meadow/1.10/test/Rain Meadow.dll`。
 
 ## GitHub Release
 

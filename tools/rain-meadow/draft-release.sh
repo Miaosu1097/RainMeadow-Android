@@ -16,7 +16,7 @@ if [ "$1" = upload-test ]; then
     run=${GITHUB_RUN_ID:?Set the Actions run ID}
     attempt=${GITHUB_RUN_ATTEMPT:?Set the Actions run attempt}
     tag="android-test-$run-$attempt"
-    notes=$(printf 'Debug DLL for Android game snapshot %s. Install the matching full mod before replacing plugins/Rain Meadow.dll.\n\nSource commit `%s`.\n' "$revision" "$commit")
+    notes=$(printf 'Debug DLL for Android game snapshot %s. Install the matching full mod, then rename the downloaded DLL to Rain Meadow.dll and replace the copy in plugins/.\n\nSource commit `%s`.\n' "$revision" "$commit")
     gh release create --repo "$repository" --draft --prerelease --target "$commit" \
         --title "Android Test DLL ($revision) #$run/$attempt" --notes "$notes" -- "$tag" "$dll"
     exit 0
