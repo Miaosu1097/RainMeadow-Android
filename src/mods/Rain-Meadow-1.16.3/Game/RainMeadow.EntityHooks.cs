@@ -213,7 +213,7 @@ namespace RainMeadow
                 {
                     if (oe.roomSession == null || !oe.roomSession.participants.Contains(oe.owner)) //if owner of oe is subscribed (is participant) do not request
                     {
-                        oe.Request();
+                        oe.RequestIfAvailable();
                     }
                 }
                 if (oe.isMine)
@@ -238,7 +238,7 @@ namespace RainMeadow
                 {
                     if (oe.roomSession == null || !oe.roomSession.participants.Contains(oe.owner)) //if owner of oe is subscribed (is participant) do not request
                     {
-                        oe.Request();
+                        oe.RequestIfAvailable();
                     }
                 }
                 if (oe.isMine)

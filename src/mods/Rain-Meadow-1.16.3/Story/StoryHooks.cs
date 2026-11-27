@@ -1085,7 +1085,7 @@ namespace RainMeadow
             orig(self);
             if (OnlineManager.lobby != null && self.oracle.abstractPhysicalObject.GetOnlineObject(out var opo) && !opo.isMine)
             {
-                opo.Request();
+                opo.RequestIfAvailable();
             }
         }
 

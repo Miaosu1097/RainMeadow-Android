@@ -64,7 +64,7 @@ namespace RainMeadow
                     if (ent is AbstractPhysicalObject apo && OnlinePhysicalObject.map.TryGetValue(apo, out var oe)
                          && !oe.realized && !oe.isMine && oe.isTransferable && !oe.isPending)
                     {
-                        oe.Request(); // I am realizing this entity, let me have it
+                        oe.RequestIfAvailable(); // I am realizing this entity, let me have it
                     }
                 }
             }

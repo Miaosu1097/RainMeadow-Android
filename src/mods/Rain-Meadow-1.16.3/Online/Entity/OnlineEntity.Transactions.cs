@@ -2,6 +2,15 @@
 {
     public abstract partial class OnlineEntity
     {
+        internal void RequestIfAvailable()
+        {
+            if (!isMine && isTransferable && !isPending &&
+                currentlyJoinedResource is { isAvailable: true, isReleasing: false })
+            {
+                Request();
+            }
+        }
+
         // I request, to someone else
         public void Request()
         {
@@ -9,8 +18,9 @@
             if (isMine) throw new InvalidProgrammerException("this entity is already mine");
             if (!isTransferable) throw new InvalidProgrammerException("cannot be transfered");
             if (isPending) throw new InvalidProgrammerException("this entity has a pending request");
-            if (!currentlyJoinedResource.isAvailable) throw new InvalidProgrammerException("in unavailable resource");
-            if (!owner.hasLeft && currentlyJoinedResource.participants.Contains(owner))
+            var joined = currentlyJoinedResource;
+            if (joined is not { isAvailable: true }) throw new InvalidProgrammerException("in unavailable resource");
+            if (!owner.hasLeft && joined.participants.Contains(owner))
             {
                 isTransfering = true;
                 pendingRequest = owner.InvokeRPC(this.Requested).Then(this.ResolveRequest);
@@ -32,20 +42,18 @@
         {
             RainMeadow.Debug(this);
             RainMeadow.Debug("Requested by : " + request.from.id);
-            if (isTransferable && this.isMine)
+            var primary = primaryResource;
+            var joined = currentlyJoinedResource;
+            if (isTransferable && !isPending && !request.from.hasLeft &&
+                primary is { isActive: true, isReleasing: false, owner: { hasLeft: false } } &&
+                joined is { isAvailable: true, isReleasing: false } &&
+                (isMine || (primary.isOwner && (owner.hasLeft || !joined.participants.Contains(owner)))))
             {
-                request.from.QueueEvent(new GenericResult.Ok(request)); // your request was well received, now please be patient while I transfer it
-                this.primaryResource.LocalEntityTransfered(this, request.from);
-            }
-            else if (isTransferable && (owner.hasLeft || !currentlyJoinedResource.participants.Contains(owner)) && this.primaryResource.isOwner)
-            {
+                primary.LocalEntityTransfered(this, request.from);
                 request.from.QueueEvent(new GenericResult.Ok(request));
-                this.primaryResource.LocalEntityTransfered(this, request.from);
             }
             else
             {
-                if (!isTransferable) RainMeadow.Debug("Denied because not transferable");
-                else if (!isMine) RainMeadow.Debug("Denied because not mine");
                 request.from.QueueEvent(new GenericResult.Error(request));
             }
         }
@@ -95,24 +103,23 @@
         {
             RainMeadow.Debug(this);
             RainMeadow.Debug("Released by : " + rpcEvent.from.id);
-            if (isTransferable && this.owner == rpcEvent.from && this.primaryResource.isOwner) // theirs and I can transfer
+            var primary = primaryResource;
+            if (isTransferable && !isPending && owner == rpcEvent.from &&
+                primary is { isOwner: true, isActive: true, isReleasing: false })
             {
-                rpcEvent.from.QueueEvent(new GenericResult.Ok(rpcEvent)); // ok to them
-                if (inResource.isAvailable || inResource.super.isActive)
+                if (inResource is { owner: { hasLeft: false } } &&
+                    (inResource.isAvailable || inResource.super.isActive))
                 {
-                    if (this.owner != inResource.owner) this.primaryResource.LocalEntityTransfered(this, inResource.owner);
+                    if (owner != inResource.owner) primary.LocalEntityTransfered(this, inResource.owner);
                 }
-                else
+                else if (!isMine)
                 {
-                    if (!this.isMine) this.primaryResource.LocalEntityTransfered(this, OnlineManager.mePlayer);
+                    primary.LocalEntityTransfered(this, OnlineManager.mePlayer);
                 }
+                rpcEvent.from.QueueEvent(new GenericResult.Ok(rpcEvent));
             }
             else
             {
-                if (!isTransferable) RainMeadow.Error("Denied because not transferable");
-                else if (owner != rpcEvent.from) RainMeadow.Error("Denied because not theirs");
-                else if (!primaryResource.isOwner) RainMeadow.Error("Denied because I don't supervise it");
-                else if (isPending) RainMeadow.Error("Denied because pending");
                 rpcEvent.from.QueueEvent(new GenericResult.Error(rpcEvent));
             }
         }

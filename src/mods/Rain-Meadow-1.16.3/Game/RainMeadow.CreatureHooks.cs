@@ -346,7 +346,7 @@ namespace RainMeadow
                 grabbingOnline.Lock("grasp", grabbingOnline.owner.InvokeRPC(CreatureGrabRPC, oc.id, grasp));
                 if (!grabbingOnline.isPending && grabbingOnline.isTransferable)
                 {
-                    grabbingOnline.Request();
+                    grabbingOnline.RequestIfAvailable();
                 } 
             }
             

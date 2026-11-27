@@ -430,20 +430,15 @@ namespace RainMeadow
                     RainMeadow.Debug($"Abandoned entity: {ent}");
                     if (ent.isTransferable && !OnlineManager.mePlayer.isActuallySpectating)
                     {
-                        if (!ent.primaryResource.participants.Contains(ent.owner) || ent.owner.hasLeft) // owner really just left if behind
+                        var primary = ent.primaryResource;
+                        if (primary == null) continue;
+                        if (!primary.participants.Contains(ent.owner) || ent.owner.hasLeft)
                         {
-                            if (ent.primaryResource == this) // we're in control
-                            {
-                                EntityTransfered(ent, OnlineManager.mePlayer);
-                            }
-                        }
-                        else if (!ent.isPending) // they're still around, request
-                        {
-                            ent.Request();
+                            if (primary == this) EntityTransfered(ent, OnlineManager.mePlayer);
                         }
                         else
                         {
-                            RainMeadow.Error("Couldn't request entitity because pending: " + ent);
+                            ent.RequestIfAvailable();
                         }
                     }
                     else // untransferable, kick it out

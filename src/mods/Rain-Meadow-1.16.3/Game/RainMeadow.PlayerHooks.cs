@@ -1203,7 +1203,7 @@ public partial class RainMeadow
                             {
                                 try
                                 {
-                                    onlineEntity.Request();
+                                    onlineEntity.RequestIfAvailable();
                                 }
                                 catch (Exception except)
                                 {

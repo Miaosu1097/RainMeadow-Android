@@ -333,18 +333,21 @@ namespace RainMeadow
         public void OnEntityTransferRequest(RPCEvent entityTransferRequest, OnlineEntity oe, OnlinePlayer newOwner)
         {
             RainMeadow.Debug($"{oe} : {this} : to {newOwner}");
-            if (oe != null && entityTransferRequest.from == oe.owner && isOwner && isActive && !isReleasing)
+            OnlineManager.RunDeferred(() =>
             {
-                 OnlineManager.RunDeferred(() => { // deferred so we receive the incoming state first
+                // State updates can leave the resource or change ownership before this runs.
+                if (oe != null && oe.primaryResource == this && entityTransferRequest.from == oe.owner
+                    && isOwner && isActive && !isReleasing && joinedEntities.ContainsKey(oe.id)
+                    && newOwner is { hasLeft: false } && participants.Contains(newOwner))
+                {
                     EntityTransfered(oe, newOwner);
-                });
-                entityTransferRequest.from.QueueEvent(new GenericResult.Ok(entityTransferRequest));
-            }
-            else
-            {
-                RainMeadow.Debug($"failed with reasons: {oe != null} {entityTransferRequest.from == oe?.owner} {isOwner} {isActive} {!isReleasing}");
-                entityTransferRequest.from.QueueEvent(new GenericResult.Error(entityTransferRequest));
-            }
+                    entityTransferRequest.from.QueueEvent(new GenericResult.Ok(entityTransferRequest));
+                }
+                else
+                {
+                    entityTransferRequest.from.QueueEvent(new GenericResult.Error(entityTransferRequest));
+                }
+            });
         }
 
         public void OnEntityTransferResolve(GenericResult entityTransferResult)

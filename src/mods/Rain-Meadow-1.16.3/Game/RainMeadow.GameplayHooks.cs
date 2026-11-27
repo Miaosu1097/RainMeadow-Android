@@ -652,15 +652,7 @@ namespace RainMeadow
                             bool btransferable = bentities.All(e => e.isTransferable);
                             if (btransferable)
                             {
-                                RainMeadow.Debug("requesting all connected objects");
-                                foreach (var item in bentities)
-                                {
-                                    if (!item.isPending) item.Request();
-                                    else
-                                    {
-                                        RainMeadow.Debug($"can't request {item} because pending");
-                                    }
-                                }
+                                RequestRemoteGroupMembers(bentities);
                             }
                             else
                             {
@@ -685,15 +677,7 @@ namespace RainMeadow
                             bool atransferable = aentities.All(e => e.isTransferable);
                             if (atransferable)
                             {
-                                RainMeadow.Debug("requesting all connected objects");
-                                foreach (var item in aentities)
-                                {
-                                    if (!item.isPending) item.Request();
-                                    else
-                                    {
-                                        RainMeadow.Debug($"can't request {item} because pending");
-                                    }
-                                }
+                                RequestRemoteGroupMembers(aentities);
                             }
                             else
                             {
@@ -704,6 +688,15 @@ namespace RainMeadow
                 }
             }
             orig(self, A, B);
+        }
+
+        private static void RequestRemoteGroupMembers(IEnumerable<OnlinePhysicalObject?> objects)
+        {
+            foreach (var item in objects)
+            {
+                // Connections can cross ownership boundaries within the same group.
+                item?.RequestIfAvailable();
+            }
         }
 
         private void PhysicalObject_HitByExplosion(On.PhysicalObject.orig_HitByExplosion orig, PhysicalObject self, float hitFac, Explosion explosion, int hitChunk)
@@ -1100,7 +1093,7 @@ namespace RainMeadow
                     {
                         var grabbersOtherThanMe = grasp.grabbed.grabbedBy.Select(x => x.grabber).Where(x => x != self);
                         if (grabbersOtherThanMe.All(x => x.abstractPhysicalObject.GetOnlineObject(out var opo) && opo != null && opo.isMine))
-                            onlineGrabbed.Request();
+                            onlineGrabbed.RequestIfAvailable();
                     }
                 }
             }
