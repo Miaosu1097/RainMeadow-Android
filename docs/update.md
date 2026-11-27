@@ -1,38 +1,41 @@
 # 游戏内公告与更新
 
-[version.json](../version.json) 的 `notice` 用来显示玩家公告，`release` 用来提示有可用的新版本。两项同时符合显示条件时，游戏把公告正文与更新按钮放在同一个弹窗里。
+[version.json](../version.json) 中的 `notice` 用于玩家公告，`release` 用于完整包的版本提示。公告可以使用现有的镜像。差分更新由官方 GitHub 仓库的 `delta` 字段启用，可与公告出现在同一个弹窗。
 
 ## 公告
 
 | 字段 | 用途 |
 |:--|:--|
-| `version` | 公告编号。该编号已读时跳过，公告有新内容时换一个编号。 |
-| `updated` | 可选，显示在公告编号旁边的日期。 |
+| `version` | 公告编号。有新内容时换一个编号。 |
+| `updated` | 可选的公告日期。 |
 | `title` / `title_en` | 中文／英文标题。 |
 | `message` / `message_en` | 中文／英文正文。 |
 | `buttons` | 可选链接按钮，每项包含 `text`、可选的 `text_en` 和 `url`。 |
-| `image` / `images` | 可选的单张图片地址或多帧图片地址。多帧的播放速度由 `fps` 设置，默认 8。 |
+| `image` / `images` | 可选的单张或多帧图片。多帧以 `fps` 播放，默认 8。 |
 
-到达菜单后，游戏异步读取公告和版本信息。所有来源都失败时，游戏显示检查失败，并在停留于菜单期间每隔 20 秒或网络恢复时重试。游戏成功构建弹窗后记录已读状态。公告图片全部加载失败时，游戏会在后续启动尝试重新加载，累计失败三次后记录为已读。
+`release.latest` 高于客户端 Rain Meadow 版本时显示完整包提示。可填写 `title`、`notes` 和下载地址 `download`。差分检查使用完整包的文件哈希识别基线，同一个 Rain Meadow 版本号的多次 Android 发布也可以更新。
 
-## 版本更新
+## 差分更新
 
-| 字段 | 用途 |
-|:--|:--|
-| `latest` | 高于客户端 Rain Meadow 版本时才触发更新提示。 |
-| `title` / `notes` | 单独展示更新提示时的标题和正文。 |
-| `force` | 默认 `false`，显示成功后记录该版本已读。设为 `true` 时，更新按钮改为“立即更新”，关闭后下次启动仍可收到提示。 |
-| `download` | 更新入口。留空时，点击更新按钮会打开项目仓库。 |
-| `targets` | 可选的逐文件更新目标。对象形式可为每个目标指定相对于模组根目录的 `path`、下载 `url` 和 SHA-256 的 `sha256`。未单独指定 `url` 时使用 `download`。字符串形式的目标也使用 `download`。启用逐文件下载时须填写 `download`。 |
+CI 按文件内容比较上一份已公开发布、且游戏快照相同的完整 ZIP。差分 ZIP 包含新增和有改动的文件。清单列出基线与目标版本的文件哈希，安装时以此识别应删除的旧文件。两个版本相同或找不到公开的基线时，CI 只生成完整包草稿。
 
-逐文件更新先将下载结果写为 `*.new`。至少一个文件写入成功时，弹窗会提示完全退出游戏后重启。移植版下次初始化资源前应用暂存的文件，尽力保留同名 `*.bak` 备份。没有成功暂存任何文件时，更新按钮会打开 `download` 指向的页面。
+游戏在菜单中检查官方清单。匹配基线时，玩家可选择下载差分，再选择「安装并退出」。校验或安装失败时可以打开目标完整包页面。不能匹配的安装，例如改过 DLL 的调试包，也使用完整包。模组目录中未列入正式包的额外文件会保留。
+
+游戏校验清单、差分 ZIP、待写入的文件和本地基线的 SHA-256。安装前备份受影响的文件，最后替换主 DLL。安装中断时，下次启动尝试恢复旧文件或确认目标文件已全部安装。使用旧版更新器的玩家需要先手动安装一份支持差分的完整包。
 
 ## 发布流程
 
-1. 按 [CI 发布流程](ci.md#github-release) 构建 ZIP 和校验文件。验证安装包后发布 Release。
-2. 如果需要游戏内的新版提示，再填写 `release.latest` 和面向玩家的更新说明。只通知玩家手动安装时可将 `download` 留空，`targets` 保持为空数组。
-3. 单独发布玩家公告时，更新 `notice`，并更换公告编号。公告可以包含使用说明、已知联机情况和下载入口。
+1. 按 [CI 发布流程](ci.md#github-release) 创建正式构建。完整 ZIP 和 SHA-256 仍在原来的 Release 草稿里。存在差分时，CI 另外创建 `<目标标签>-delta-<游戏快照>` 草稿。
+2. 检查并发布完整 Release。再发布差分 Release，保留其预发行标记。差分 Release 包含 ZIP、哈希清单和 `RainMeadow-android-update.json`。
+3. 将 `RainMeadow-android-update.json` 中的顶层 `delta` 字段合入主分支的 `version.json`。公告可独立更新。
 
-## 测试
+## 本地验证
 
-[test/testpatch.txt](../test/testpatch.txt) 是用于验证逐文件下载和重启替换的测试文件。使用开发构建、单独的测试清单和测试安装目录验证。正式的 `version.json` 用于玩家公告和发布信息。测试文件只存放在源码仓库，CI 不会将它加入安装 ZIP。
+```sh
+python3 -IB tools/rain-meadow/delta.py create work/base.zip work/target.zip \
+  work/delta 1.10 base-tag target-tag
+python3 -IB tools/rain-meadow/delta.py verify work/base.zip \
+  work/delta/RainMeadow-android-delta.zip work/delta/RainMeadow-android-delta.json work/target.zip
+```
+
+校验过程按清单重建目标文件集合，逐个核对内容。大小写重命名和文件与目录互换时使用完整 ZIP。

@@ -67,3 +67,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
         run: sh tools/rain-meadow/draft-release.sh upload "$RELEASE_TAG" "$GAME_REVISION"
+      - name: Draft a separate delta from the previous published full release
+        if: ${{ inputs.release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          zip="${RAIN_MEADOW_RELEASE_ZIP:-release/Rain-Meadow/$GAME_REVISION/RainMeadow-android.zip}"
+          python3 -IB tools/rain-meadow/delta.py draft "$GITHUB_REPOSITORY" "$GAME_REVISION" "$RELEASE_TAG" "$zip"

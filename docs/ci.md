@@ -34,7 +34,9 @@ Git 主仓库保存源码、文本资源、脚本和输入版本记录。构建�
 
 ## GitHub Release
 
-为准备发布的源码提交创建并推送标签，例如 `v0.1.16.3-android.1`。在 Actions 手动运行 **Rain Meadow Android**，选择与该标签同一提交的 ref，并填写 `release_tag`。当提供标签时，Action 自动走完整打包模式，成功后在源码仓库创建 Release 草稿，并附上 ZIP 和 `.sha256`。可在 Releases 页面编辑说明并发布草稿。只有这条手动路径申请 `contents: write`，使用 Actions 自带 token 上传。[GitHub CLI 的草稿发布](https://cli.github.com/manual/gh_release_create)
+为准备发布的源码提交创建并推送标签，例如 `v0.1.16.3-android.1`。在 Actions 手动运行 **Rain Meadow Android**，选择与该标签同一提交的 ref，并填写 `release_tag`。当提供标签时，Action 自动走完整打包模式，成功后在源码仓库创建 Release 草稿，并附上 ZIP 和 `.sha256`。可在 Releases 页面编辑说明并发布草稿。发布完整包和调试 DLL 草稿的手动工作流使用 Actions 自带 token 上传。[GitHub CLI 的草稿发布](https://cli.github.com/manual/gh_release_create)
+
+存在同一游戏快照的上一份已发布完整包时，CI 还会生成独立的差分草稿。完整包保留在原 Release。差分接入游戏公告的步骤见[更新发布流程](update.md#发布流程)。
 
 ## 自托管 runner
 

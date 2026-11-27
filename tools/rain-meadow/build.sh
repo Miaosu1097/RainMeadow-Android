@@ -54,7 +54,7 @@ references.extend(
 )
 references.extend(framework / f"{name}.dll" for name in (
     "mscorlib", "System", "System.Core", "System.Configuration", "System.Drawing",
-    "System.Numerics", "System.Runtime.Serialization", "System.Xml", "System.Xml.Linq",
+    "System.IO.Compression", "System.Numerics", "System.Runtime.Serialization", "System.Xml", "System.Xml.Linq",
 ))
 references.append(framework / "Facades/netstandard.dll")
 if steam_probe:

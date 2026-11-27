@@ -26,7 +26,7 @@ namespace RainMeadow
     ///   If the fetch fails, show a dialog and retry every 20 seconds.
     ///   Retry immediately when network reachability changes to online.
     /// </summary>
-    internal static class UpdateChecker
+    internal static partial class UpdateChecker
     {
         /// <summary>
         /// Try the manifest sources in order and use the first valid JSON response.
@@ -38,8 +38,8 @@ namespace RainMeadow
         private static readonly string[] VersionUrls =
         {
             "https://gh-proxy.com/https://raw.githubusercontent.com/Miaosu1097/RainMeadow-Android/main/version.json",
-            "https://api.github.com/repos/Miaosu1097/RainMeadow-Android/contents/version.json",
-            "https://raw.githubusercontent.com/Miaosu1097/RainMeadow-Android/main/version.json",
+            VersionApiUrl,
+            VersionRawUrl,
             "https://cdn.jsdelivr.net/gh/Miaosu1097/RainMeadow-Android@main/version.json",
             "https://ghfast.top/https://raw.githubusercontent.com/Miaosu1097/RainMeadow-Android/main/version.json",
         };
@@ -71,15 +71,6 @@ namespace RainMeadow
         private static string relNotes;
         private static string relDownload;
         private static bool relForce;
-        /// <summary>A file to replace in an update. See ParseTargets for supported formats.</summary>
-        private sealed class TargetSpec
-        {
-            internal string path;     // Path relative to the mod root.
-            internal string url;      // Falls back to release.download when empty.
-            internal string sha256;   // Optional SHA-256 checksum.
-        }
-
-        private static readonly List<TargetSpec> relTargets = new List<TargetSpec>();
 
         private static readonly List<string> noticeImages = new List<string>();
         private static float noticeFps = 8f;
@@ -106,6 +97,7 @@ namespace RainMeadow
 
         internal static void ApplyPendingUpdate()
         {
+            if (Application.platform != RuntimePlatform.Android) return;
             try
             {
                 string root = ModRoot();
@@ -115,35 +107,12 @@ namespace RainMeadow
                     return;
                 }
 
-                foreach (var newFile in Directory.GetFiles(root, "*.new", SearchOption.AllDirectories))
-                {
-                    string target = newFile.Substring(0, newFile.Length - 4);
-                    try
-                    {
-                        if (File.Exists(target))
-                        {
-                            try { File.Copy(target, target + ".bak", true); } catch { }
-                            File.Delete(target);
-                        }
-                        File.Move(newFile, target);
-                        UnityEngine.Debug.Log("[AndroidExtras] applied: " + Relative(root, target));
-                    }
-                    catch (Exception e)
-                    {
-                        UnityEngine.Debug.LogError("[AndroidExtras] apply failed: " + Relative(root, target) + " / " + e.Message);
-                    }
-                }
+                DeltaPackage.Recover(root);
             }
             catch (Exception e)
             {
                 UnityEngine.Debug.LogError("[AndroidExtras] apply pending error: " + e.Message);
             }
-        }
-
-        private static string Relative(string root, string full)
-        {
-            try { return full.Substring(root.Length).TrimStart('/', '\\'); }
-            catch { return full; }
         }
 
         private static string PluginDir()
@@ -177,6 +146,8 @@ namespace RainMeadow
             try
             {
                 if (!IsMenuReady(self)) return;
+                if (deltaConfirm) ShowDeltaConfirmation(self.processManager);
+                if (deltaFailed) ShowDeltaFailure(self.processManager);
 
                 switch (phase)
                 {
@@ -194,7 +165,7 @@ namespace RainMeadow
                         break;
 
                     case Phase.Done:
-                        if ((hasNotice || hasRelease) && !contentDialogShown)
+                        if ((hasNotice || hasRelease || delta != null) && !contentDialogShown)
                         {
                             contentDialogShown = true;
                             ShowContent(self);
@@ -228,7 +199,7 @@ namespace RainMeadow
 
         /// <summary>
         /// Rewrite raw GitHub links through the configured proxy.
-        /// This applies to image, download, and targets[].url values from the manifest.
+        /// This applies to announcement images from the manifest.
         /// The proxy provides access where GitHub's raw host is unreachable.
         /// </summary>
         private static string Proxyify(string url)
@@ -319,6 +290,7 @@ namespace RainMeadow
 
             ParseNotice(root.Value<JObject>("notice"));
             ParseRelease(root.Value<JObject>("release"));
+            yield return CheckDelta(root, usedUrl);
 
             phase = Phase.Done;
             UnityEngine.Debug.Log("[AndroidExtras] done via " + usedUrl
@@ -425,63 +397,8 @@ namespace RainMeadow
             relDownload = o.Value<string>("download") ?? "";
             relForce = o.Value<bool?>("force") ?? false;
 
-            ParseTargets(o.Value<JArray>("targets"));
-
             hasRelease = true;
-            UnityEngine.Debug.Log("[AndroidExtras] release " + v + " force=" + relForce + " targets=" + relTargets.Count);
-        }
-
-        /// <summary>
-        /// Parses targets in either of two formats:
-        ///
-        ///   1) A string array, with each file using the content at release.download.
-        ///      "targets": ["plugins/Rain Meadow.dll", "text/text_chi/strings.txt"]
-        ///
-        ///   2) An object array with a URL and optional SHA-256 per target.
-        ///      "targets": [
-        ///        { "path": "plugins/Rain Meadow.dll", "url": "https://...", "sha256": "..." },
-        ///        { "path": "world/cl/world_cl.txt",  "url": "https://..." }
-        ///      ]
-        ///
-        /// All paths are relative to the mod root, which contains the plugins directory.
-        /// </summary>
-        private static void ParseTargets(JArray arr)
-        {
-            relTargets.Clear();
-
-            if (arr != null)
-            {
-                foreach (var t in arr)
-                {
-                    if (t == null) continue;
-
-                    // String target.
-                    if (t.Type == JTokenType.String)
-                    {
-                        var s = t.ToString();
-                        if (!string.IsNullOrWhiteSpace(s))
-                            relTargets.Add(new TargetSpec { path = s.Trim() });
-                        continue;
-                    }
-
-                    // Object target.
-                    if (t.Type == JTokenType.Object)
-                    {
-                        var path = t.Value<string>("path");
-                        if (string.IsNullOrWhiteSpace(path)) continue;
-
-                        relTargets.Add(new TargetSpec
-                        {
-                            path = path.Trim(),
-                            url = t.Value<string>("url"),
-                            sha256 = t.Value<string>("sha256"),
-                        });
-                    }
-                }
-            }
-
-            if (relTargets.Count == 0)
-                relTargets.Add(new TargetSpec { path = "plugins/Rain Meadow.dll" });
+            UnityEngine.Debug.Log("[AndroidExtras] release " + v + " force=" + relForce);
         }
 
         // ============ Dialogs ============
@@ -537,6 +454,14 @@ namespace RainMeadow
                     body = noticeMessage;
                     buttons.AddRange(noticeButtons);
                 }
+                else if (delta != null)
+                {
+                    title = en ? "Rain Meadow Android update" : "雨甸安卓版更新";
+                    subtitle = delta.TargetTag;
+                    body = deltaCanApply
+                        ? (en ? "An update is available for the installed version." : "当前安装有可用的差分更新。")
+                        : (en ? "Download the full package for this installation." : "请使用完整安装包更新当前安装。");
+                }
                 else
                 {
                     title = string.IsNullOrEmpty(relTitle) ? ((en ? "New version " : "新版本 ") + relLatest) : relTitle;
@@ -544,11 +469,13 @@ namespace RainMeadow
                     body = relNotes;
                 }
 
-                if (hasRelease)
+                if (hasRelease || delta != null)
                 {
                     buttons.Add(new AnnoncementDialog.ButtonSpec
                     {
-                        text = relForce ? (en ? "Update now" : "立即更新") : (en ? "Update" : "更新"),
+                        text = delta != null && !deltaCanApply
+                            ? (en ? "Full download" : "下载完整包")
+                            : (relForce ? (en ? "Update now" : "立即更新") : (en ? "Update" : "更新")),
                         isUpdate = true,
                     });
                 }
@@ -663,118 +590,12 @@ namespace RainMeadow
             }
         }
 
-        // ============ Download targets ============
-
         private static void BeginDownload()
         {
-            if (string.IsNullOrEmpty(relDownload)) { OpenUrl(RepoUrl); return; }
-            if (host == null) { OpenUrl(relDownload); return; }
-            host.StartCoroutine(Download());
-        }
-
-        private static IEnumerator Download()
-        {
-            string root = ModRoot();
-            if (string.IsNullOrEmpty(root)) { OpenUrl(relDownload); yield break; }
-
-            int ok = 0;
-            int fail = 0;
-
-            foreach (var spec in relTargets)
-            {
-                string url = string.IsNullOrWhiteSpace(spec.url) ? relDownload : spec.url;
-                if (string.IsNullOrWhiteSpace(url))
-                {
-                    UnityEngine.Debug.LogError("[AndroidExtras] no url for " + spec.path);
-                    fail++;
-                    continue;
-                }
-
-                byte[] data = null;
-                using (var req = UnityWebRequest.Get(Proxyify(url)))
-                {
-                    req.timeout = 180;
-                    yield return req.SendWebRequest();
-                    if (req.result == UnityWebRequest.Result.Success)
-                        data = req.downloadHandler.data;
-                    else
-                        UnityEngine.Debug.LogError("[AndroidExtras] download failed (" + spec.path + "): " + req.result);
-                }
-
-                if (data == null || data.Length == 0) { fail++; continue; }
-
-                if (!string.IsNullOrWhiteSpace(spec.sha256))
-                {
-                    string actual = Sha256Hex(data);
-                    if (!string.Equals(actual, spec.sha256.Trim(), StringComparison.OrdinalIgnoreCase))
-                    {
-                        UnityEngine.Debug.LogError("[AndroidExtras] sha256 mismatch for " + spec.path
-                                       + " expect " + spec.sha256.Trim() + " actual " + actual);
-                        fail++;
-                        continue;
-                    }
-                }
-
-                try
-                {
-                    string full = Path.Combine(root, spec.path.Replace('/', Path.DirectorySeparatorChar));
-                    string dir = Path.GetDirectoryName(full);
-                    if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-
-                    File.WriteAllBytes(full + ".new", data);
-                    ok++;
-                    UnityEngine.Debug.Log("[AndroidExtras] staged: " + spec.path + " (" + data.Length + " bytes)");
-                }
-                catch (Exception e)
-                {
-                    UnityEngine.Debug.LogError("[AndroidExtras] stage failed: " + spec.path + " / " + e.Message);
-                    fail++;
-                }
-            }
-
-            if (ok == 0)
-            {
-                OpenUrl(relDownload);
-                yield break;
-            }
-
-            ShowRestart(ok, fail);
-        }
-
-        private static string Sha256Hex(byte[] data)
-        {
-            try
-            {
-                using (var sha = System.Security.Cryptography.SHA256.Create())
-                {
-                    var hash = sha.ComputeHash(data);
-                    var sb = new System.Text.StringBuilder(hash.Length * 2);
-                    foreach (var b in hash) sb.Append(b.ToString("x2"));
-                    return sb.ToString();
-                }
-            }
-            catch { return ""; }
-        }
-
-        private static void ShowRestart(int ok, int fail)
-        {
-            try
-            {
-                var pm = host?.processManager;
-                if (pm == null) return;
-
-                bool en = PreferEnglish();
-                string body = en
-                    ? "Downloaded " + ok + " file(s)"
-                    : "已下载 " + ok + " 个文件";
-                if (fail > 0) body += en ? (", " + fail + " failed") : ("，" + fail + " 个失败");
-                body += en
-                    ? ".\n\nPlease fully quit and restart the game; the update is applied on next launch."
-                    : "。\n\n请完全退出并重新启动游戏，更新会在启动时自动应用。";
-
-                pm.ShowDialog(new DialogNotify(body, NoticeSize, pm, () => { }));
-            }
-            catch (Exception e) { UnityEngine.Debug.LogError("[AndroidExtras] restart: " + e.Message); }
+            if (delta != null) BeginDelta();
+            else if (Uri.TryCreate(relDownload, UriKind.Absolute, out var download) &&
+                     download.Scheme == Uri.UriSchemeHttps) OpenUrl(download.AbsoluteUri);
+            else OpenUrl(RepoUrl);
         }
 
         // ============ Utilities ============
