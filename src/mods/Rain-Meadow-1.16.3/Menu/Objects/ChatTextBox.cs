@@ -16,6 +16,7 @@ namespace RainMeadow
         private ButtonTypingHandler typingHandler;
         private GameObject gameObject;
         private bool isUnloading = false;
+        private AndroidTextEditor? androidEditor;
         private float DASDelay = 1f / 2f; //In seconds
         private float DASRepeatRate = 1f / 30f; //In seconds/proc
         private float backspaceHeld = 0f;
@@ -113,6 +114,7 @@ namespace RainMeadow
         public override void Clicked()
         {
             base.Clicked();
+            if (buttonBehav.clicked && TryOpenAndroidEditor()) return;
             if (!MultiView) return;
             if (previouslySubmittedText)
             {
@@ -151,10 +153,50 @@ namespace RainMeadow
             Focused = focused;
         }
 
+        internal bool TryOpenAndroidEditor(Action? onCancel = null)
+        {
+            if (Application.platform != RuntimePlatform.Android || isUnloading || androidEditor != null
+                || OnlineManager.lobby is not Lobby lobby || !MatchmakingManager.currentInstance.canSendChatMessages)
+                return false;
+
+            androidEditor = AndroidTextEditor.TryOpen(menu.Translate("Chat"), lastSentMessage, false,
+                TouchScreenKeyboardType.Default, textLimit, text =>
+                {
+                    androidEditor = null;
+                    if (isUnloading || !ReferenceEquals(OnlineManager.lobby, lobby)) return;
+                    if (text == null)
+                    {
+                        onCancel?.Invoke();
+                        return;
+                    }
+
+                    int length = Math.Min(text.Length, textLimit);
+                    if (length > 0 && char.IsHighSurrogate(text[length - 1])) length--;
+                    lastSentMessage = text.Substring(0, length);
+                    cursorPos = length;
+                    selectionPos = -1;
+                    SubmitMessage(lastSentMessage);
+                });
+            return androidEditor != null;
+        }
+
+        private void CloseAndroidEditor()
+        {
+            androidEditor?.Dispose();
+            androidEditor = null;
+        }
+
+        public override void RemoveSprites()
+        {
+            CloseAndroidEditor();
+            base.RemoveSprites();
+        }
+
         public void DelayedUnload(float delay)
         {
             if (!isUnloading)
             {
+                CloseAndroidEditor();
                 cursorPos = 0;
                 ShouldCapture(false);
                 isUnloading = true;
@@ -174,6 +216,7 @@ namespace RainMeadow
         }
         private void CaptureInputs(char input)
         {
+            if (androidEditor != null) return;
             // the "Delete" character, which is emitted by most - but not all - operating systems when ctrl and backspace are used together
             if (MultiView)
             {
@@ -224,64 +267,7 @@ namespace RainMeadow
             }
             else if (input == '\n' || input == '\r')
             {
-                if (OnlineManager.lobby.clientSettings.TryGetValue(OnlineManager.mePlayer, out var cs))
-                {
-                    cs.isInteracting = false;
-                }
-                if (msg.Length > 0 && !string.IsNullOrWhiteSpace(msg))
-                {
-                    if (messageHistory.Count == 0 || messageHistory[messageHistory.Count - 1] != msg)
-                    {
-                        messageHistory.Add(msg);
-                    }
-
-
-                    if (SpecialEvents.EventActiveInLobby<SpecialEvents.AprilFools>() && UnityEngine.Random.Range(0, 100) == 1)
-                    {
-                        string coinBoast = "";
-                        int coins = RainMeadow.rainMeadowOptions.MeadowCoins.Value;
-                        switch (coins)
-                        {
-                            case > 1000:
-                                coinBoast = $" i hacked to get all my meadow coins ({coins} coins)";
-                                break;
-                            case > 500:
-                                coinBoast = $" i beat meadow ({coins} coins)";
-                                break;
-                            case > 100:
-                                coinBoast = $" btw I have {coins} coins";
-                                break;
-                            case < 50:
-                                coinBoast = $" im poor ({coins} coins)";
-                                break;
-                            default:
-                                break;
-                        }
-                        msg += coinBoast;
-                    }
-                    MatchmakingManager.currentInstance.SendChatMessage(msg);
-                    foreach (var player in OnlineManager.players)
-                    {
-                        player.InvokeRPC(RPCs.UpdateUsernameTemporarily, msg);
-                    }
-                    if (MultiView)
-                    {
-                        HandleTextSubmit();
-                        return;
-                    }
-                }
-                else
-                {
-                    if (MultiView) HandleDeselect();
-                    menu.PlaySound(SoundID.MENY_Already_Selected_MultipleChoice_Clicked);
-                    RainMeadow.Debug("Could not send lastSentMessage because it had no text or only had whitespaces");
-                    if (MultiView) return;
-                }
-                // only resets the chat text box if in a story lobby menu, otherwise the text box is just destroyed
-                OnShutDownRequest?.Invoke();
-                typingHandler.Unassign(this);
-                lastSentMessage = "";
-                completed = false;
+                SubmitMessage(msg);
                 return;
             }
             else if (!isUnloading)
@@ -309,9 +295,73 @@ namespace RainMeadow
             UpdateLabel(lastSentMessage);
         }
 
+        private void SubmitMessage(string msg)
+        {
+            if (OnlineManager.lobby?.clientSettings.TryGetValue(OnlineManager.mePlayer, out var cs) == true)
+            {
+                cs.isInteracting = false;
+            }
+            if (msg.Length > 0 && !string.IsNullOrWhiteSpace(msg))
+            {
+                if (messageHistory.Count == 0 || messageHistory[messageHistory.Count - 1] != msg)
+                {
+                    messageHistory.Add(msg);
+                }
+
+
+                if (SpecialEvents.EventActiveInLobby<SpecialEvents.AprilFools>() && UnityEngine.Random.Range(0, 100) == 1)
+                {
+                    string coinBoast = "";
+                    int coins = RainMeadow.rainMeadowOptions.MeadowCoins.Value;
+                    switch (coins)
+                    {
+                        case > 1000:
+                            coinBoast = $" i hacked to get all my meadow coins ({coins} coins)";
+                            break;
+                        case > 500:
+                            coinBoast = $" i beat meadow ({coins} coins)";
+                            break;
+                        case > 100:
+                            coinBoast = $" btw I have {coins} coins";
+                            break;
+                        case < 50:
+                            coinBoast = $" im poor ({coins} coins)";
+                            break;
+                        default:
+                            break;
+                    }
+                    msg += coinBoast;
+                }
+                MatchmakingManager.currentInstance.SendChatMessage(msg);
+                foreach (var player in OnlineManager.players)
+                {
+                    player.InvokeRPC(RPCs.UpdateUsernameTemporarily, msg);
+                }
+                if (MultiView)
+                {
+                    HandleTextSubmit();
+                    return;
+                }
+            }
+            else
+            {
+                if (MultiView) HandleDeselect();
+                menu.PlaySound(SoundID.MENY_Already_Selected_MultipleChoice_Clicked);
+                RainMeadow.Debug("Could not send lastSentMessage because it had no text or only had whitespaces");
+                if (MultiView) return;
+            }
+            // only resets the chat text box if in a story lobby menu, otherwise the text box is just destroyed
+            OnShutDownRequest?.Invoke();
+            typingHandler.Unassign(this);
+            lastSentMessage = "";
+            completed = false;
+        }
+
         public override void Update()
         {
             base.Update();
+            androidEditor?.Update();
+            if (isUnloading) return;
             if (MultiView)
             {
                 CheckToUnfocus();

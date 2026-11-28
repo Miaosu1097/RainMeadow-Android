@@ -83,6 +83,14 @@ internal sealed class ManagedSteamGameplay : MatchmakingManager
 
     public override bool IsTrustedCommunity(MeadowPlayerId player) => IsDev(player);
 
+    public override bool canSendChatMessages => roomId != 0 && Session.IsConnected;
+
+    public override void SendChatMessage(string message)
+    {
+        if (!Session.Chat.TrySend(roomId, message))
+            ChatLogManager.LogSystemMessage(RWCustom.Custom.rainWorld.inGameTranslator.Translate("Could not send chat message."));
+    }
+
     public override void FilterMessage(ref string message) => message = textFilter.Apply(message);
 
     public override string FilterTeamName(string name) => textFilter.Apply(name);
@@ -165,6 +173,7 @@ internal sealed class ManagedSteamGameplay : MatchmakingManager
             }
 
             roomId = createdRoomId;
+            Session.Chat.SetLobby(roomId);
             transport = opened;
             opened = null;
             MAX_LOBBY = capacity;
@@ -235,6 +244,7 @@ internal sealed class ManagedSteamGameplay : MatchmakingManager
                 attempt.Token.ThrowIfCancellationRequested();
             }
             roomId = steamLobby.LobbyId;
+            Session.Chat.SetLobby(roomId);
             transport = opened;
             opened = null;
             ApplyRoster(joined);
@@ -287,6 +297,7 @@ internal sealed class ManagedSteamGameplay : MatchmakingManager
         {
             ulong previous = roomId;
             roomId = 0;
+            Session.Chat.SetLobby(0);
             Session.LeaveRoom(previous);
             OnLobbyLeavingEvent();
         }
@@ -345,6 +356,14 @@ internal sealed class ManagedSteamGameplay : MatchmakingManager
         var nextRoster = Session.CachedRoom(roomId);
         if (nextRoster != null && nextRoster.Members.Count > 0 && !ReferenceEquals(roster, nextRoster))
             ApplyRoster(nextRoster);
+
+        for (int i = 0; i < 32 && Session.Chat.TryReceive(out var chat); ++i)
+        {
+            if (!ReferenceEquals(net, transport)) return;
+            if (FindPlayer(chat.sender) is OnlinePlayer sender && OnlineManager.lobby != null)
+                RecieveChatMessage(sender, chat.text);
+        }
+
         if (pendingCampaign is string campaign && (campaignUpdate == null || campaignUpdate.IsCompleted)
             && ownerId == Session.SteamAccountId && OnlineManager.lobby?.isOwner == true)
         {

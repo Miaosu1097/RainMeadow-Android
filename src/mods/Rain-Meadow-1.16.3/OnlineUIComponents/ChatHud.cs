@@ -11,6 +11,7 @@ namespace RainMeadow
         private RainWorldGame game;
         private ChatLogOverlay? chatLogOverlay;
         private ChatInputOverlay? chatInputOverlay;
+        private readonly AndroidChatButton? androidChatButton;
         public bool chatInputActive => chatInputOverlay is not null;
         public bool showChatLog = false;
 
@@ -29,9 +30,15 @@ namespace RainMeadow
             this.camera = camera;
             this.game = camera.game;
             ChatLogManager.MessageLogged += OnMessageLogged;
+            if (Application.platform == RuntimePlatform.Android)
+            {
+                androidChatButton = Futile.instance.gameObject.AddComponent<AndroidChatButton>();
+                androidChatButton.Initialize(this, hud.rainWorld.inGameTranslator.Translate("Chat"));
+            }
             if (!ChatLogManager.shownChatTutorial)
             {
-                this.textPrompt.AddMessage(hud.rainWorld.inGameTranslator.Translate("Press '") + (RainMeadow.rainMeadowOptions.ChatButtonKey.Value) + hud.rainWorld.inGameTranslator.Translate("' to chat, press '") + (RainMeadow.rainMeadowOptions.ChatLogKey.Value) + hud.rainWorld.inGameTranslator.Translate("' to toggle the chat log"), 60, 320, true, true);
+                if (androidChatButton == null)
+                    this.textPrompt.AddMessage(hud.rainWorld.inGameTranslator.Translate("Press '") + (RainMeadow.rainMeadowOptions.ChatButtonKey.Value) + hud.rainWorld.inGameTranslator.Translate("' to chat, press '") + (RainMeadow.rainMeadowOptions.ChatLogKey.Value) + hud.rainWorld.inGameTranslator.Translate("' to toggle the chat log"), 60, 320, true, true);
                 ChatLogManager.shownChatTutorial = true;
             }
 
@@ -103,6 +110,29 @@ namespace RainMeadow
             }
         }
 
+        internal bool CanOpenAndroidChat => !chatInputActive && OnlineManager.lobby != null
+            && MatchmakingManager.currentInstance.canSendChatMessages
+            && game.manager.currentMainLoop == game && game.manager.upcomingProcess == null
+            && !textPrompt.pausedMode && !ShouldForceCloseChat;
+
+        internal void OpenAndroidChat()
+        {
+            if (!CanOpenAndroidChat) return;
+            if (OpenChatInput().chat.TryOpenAndroidEditor(ShutDownChatInput)) return;
+            ShutDownChatInput();
+            textPrompt.AddMessage(hud.rainWorld.inGameTranslator.Translate("Android keyboard unavailable."),
+                0, 160, true, true);
+        }
+
+        private ChatInputOverlay OpenChatInput()
+        {
+            RainMeadow.Debug("creating input");
+            var input = new ChatInputOverlay();
+            chatInputOverlay = input;
+            chatLogOverlay ??= new ChatLogOverlay(this);
+            return input;
+        }
+
         public override void Draw(float timeStacker)
         {
             base.Draw(timeStacker);
@@ -133,13 +163,7 @@ namespace RainMeadow
                     }
                     else
                     {
-                        RainMeadow.Debug("creating input");
-                        chatInputOverlay = new ChatInputOverlay();
-                        if (chatLogOverlay is null)
-                        {
-                            RainMeadow.Debug("creating log");
-                            chatLogOverlay = new ChatLogOverlay(this);
-                        }
+                        OpenChatInput();
                     }
                 }
             }
@@ -181,12 +205,19 @@ namespace RainMeadow
                 chatInputOverlay.chat.DelayedUnload(0.1f);
                 chatInputOverlay.RemoveSprites();
                 chatInputOverlay = null;
+                if (OnlineManager.lobby?.clientSettings.TryGetValue(OnlineManager.mePlayer, out var settings) == true)
+                    settings.isInteracting = false;
             }
 
         }
         public void Destroy()
         {
             RainMeadow.DebugMe();
+            if (androidChatButton != null)
+            {
+                androidChatButton.enabled = false;
+                UnityEngine.Object.Destroy(androidChatButton);
+            }
             if (chatInputOverlay != null) ShutDownChatInput();
             if (chatLogOverlay != null) ShutDownChatLog();
             ChatTextBox.OnShutDownRequest -= ShutDownChatInput;

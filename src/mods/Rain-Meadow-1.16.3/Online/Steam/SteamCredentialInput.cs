@@ -1,6 +1,5 @@
 #if MEADOW_STEAM_PROBE
 using System;
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using SteamKit2.Authentication;
@@ -10,24 +9,15 @@ namespace RainMeadow
 {
     internal sealed class SteamCredentialInput : IAuthenticator
     {
-        private delegate IDisposable? OpenAndroidEditor(string title, string initialText, bool secure, Action<string?> done);
-
-        private static readonly OpenAndroidEditor? OpenWithAndroidIme =
-            Type.GetType("RainWorldAndroidIme.TextInput, AndroidIME", throwOnError: false)
-                ?.GetMethod("TryOpen", BindingFlags.Public | BindingFlags.Static)
-                ?.CreateDelegate(typeof(OpenAndroidEditor)) as OpenAndroidEditor;
-
         private readonly Action<string> update;
         private readonly CancellationToken token;
         private volatile TaskCompletionSource<string>? guardAnswer;
-        private TouchScreenKeyboard? keyboard;
-        private IDisposable? androidEditor;
-        private Action<string?>? completeEdit;
+        private AndroidTextEditor? editor;
         private string password = "";
 
         internal string AccountName { get; private set; } = "";
         internal bool HasPassword => password.Length > 0;
-        internal bool IsEditing => completeEdit != null;
+        internal bool IsEditing => editor != null;
         internal bool HasGuardRequest => guardAnswer is { Task.IsCompleted: false };
 
         internal SteamCredentialInput(Action<string> update, CancellationToken token)
@@ -113,19 +103,15 @@ namespace RainMeadow
             if (token.IsCancellationRequested || IsEditing)
                 return;
 
-            completeEdit = callback;
-            androidEditor = OpenWithAndroidIme?.Invoke(title, initialText, secure, CompleteInput);
-            if (androidEditor != null)
-                return;
-
-            keyboard = TouchScreenKeyboard.Open(initialText, TouchScreenKeyboardType.ASCIICapable,
-                autocorrection: false, multiline: false, secure: secure,
-                alert: false, textPlaceholder: title, characterLimit: 0);
-            if (keyboard == null)
+            editor = AndroidTextEditor.TryOpen(title, initialText, secure,
+                TouchScreenKeyboardType.ASCIICapable, 0, text =>
             {
-                completeEdit = null;
+                editor = null;
+                if (!token.IsCancellationRequested)
+                    callback(text);
+            });
+            if (editor == null)
                 update("Android keyboard unavailable. Enable Android Input Method and restart.");
-            }
         }
 
         internal void Update()
@@ -135,37 +121,14 @@ namespace RainMeadow
                 Close();
                 return;
             }
-            if (keyboard == null || keyboard.status == TouchScreenKeyboard.Status.Visible)
-                return;
-
-            CompleteInput(keyboard.status == TouchScreenKeyboard.Status.Done ? keyboard.text : null);
-        }
-
-        private void CompleteInput(string? text)
-        {
-            var callback = completeEdit;
-            CloseEditor();
-            if (!token.IsCancellationRequested)
-                callback?.Invoke(text);
-        }
-
-        private void CloseEditor()
-        {
-            completeEdit = null;
-            androidEditor?.Dispose();
-            androidEditor = null;
-            if (keyboard != null)
-            {
-                keyboard.text = "";
-                keyboard.active = false;
-                keyboard = null;
-            }
+            editor?.Update();
         }
 
         internal void Close()
         {
             password = "";
-            CloseEditor();
+            editor?.Dispose();
+            editor = null;
         }
     }
 }

@@ -189,6 +189,7 @@ namespace RainMeadow
                 var client = new SteamClient(configuration);
 #if MEADOW_STEAM_GAMEPLAY
                 client.AddHandler(new SteamP2PSignaling());
+                client.AddHandler(new SteamLobbyChat());
 #endif
                 using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 attempt.CancelAfter(TimeSpan.FromSeconds(10));
@@ -390,6 +391,7 @@ namespace RainMeadow
 
 #if MEADOW_STEAM_GAMEPLAY
         internal SteamP2PSignaling Signaling => client.GetHandler<SteamP2PSignaling>()!;
+        internal SteamLobbyChat Chat => client.GetHandler<SteamLobbyChat>()!;
 
         internal SteamMatchmaking.Lobby? CachedRoom(ulong roomId) =>
             matchmaking.GetLobby(RainWorldAppId, new SteamID(roomId));
